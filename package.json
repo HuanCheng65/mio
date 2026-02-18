@@ -1,0 +1,22 @@
+{
+  "name": "koishi-plugin-mio",
+  "description": "一个基于大语言模型的拟人化群聊 AI 群友",
+  "version": "0.0.1",
+  "main": "lib/index.js",
+  "typings": "lib/index.d.ts",
+  "files": [
+    "lib",
+    "dist"
+  ],
+  "license": "MIT",
+  "scripts": {},
+  "keywords": [
+    "chatbot",
+    "koishi",
+    "plugin"
+  ],
+  "devDependencies": {},
+  "peerDependencies": {
+    "koishi": "^4.18.9"
+  }
+}
