@@ -39,6 +39,10 @@ export class MemoryService {
     this.distillation = new DistillationPipeline(ctx, llm, config, this.embeddingService)
   }
 
+  getEmbeddingService(): EmbeddingService {
+    return this.embeddingService
+  }
+
   /**
    * 初始化：建表
    */
