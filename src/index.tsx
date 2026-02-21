@@ -1,4 +1,5 @@
 import { Context, Schema, Session, h, Universal } from "koishi";
+import * as fs from 'fs';
 import { MessageBuffer } from "./pipeline/message-buffer";
 import { NormalizedMessage } from "./perception/types";
 import { Debouncer } from "./pipeline/debouncer";
@@ -32,6 +33,15 @@ declare module '@koishijs/plugin-console' {
     'mio/flush-memory'(): Promise<string>
     'mio/migrate-participants'(): Promise<string>
   }
+
+function stickerMimeType(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase()
+  if (ext === 'png') return 'image/png'
+  if (ext === 'gif') return 'image/gif'
+  if (ext === 'webp') return 'image/webp'
+  return 'image/jpeg'
+}
+
 }
 
 /**
@@ -1129,8 +1139,12 @@ export function apply(ctx: Context, config: Config) {
                 logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
                 continue;
               }
-              const fileUrl = 'file:///' + path.resolve(imagePath).replace(/\\/g, '/');
-              await session.send(h.image(fileUrl));
+              const imgBuf = fs.readFileSync(imagePath);
+              if (imgBuf.length > 2 * 1024 * 1024) {
+                logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(imagePath)}`);
+                continue;
+              }
+              await session.send(h.image(imgBuf, stickerMimeType(imagePath)));
               hasSentMessageSearch = true;
               logger.debug(`[sticker] 发送表情包: ${path.basename(imagePath)}`);
             } catch (err) {
@@ -1463,8 +1477,12 @@ export function apply(ctx: Context, config: Config) {
               logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
               continue;
             }
-            const fileUrl = 'file:///' + path.resolve(imagePath).replace(/\\/g, '/');
-            await session.send(h.image(fileUrl));
+            const imgBuf = fs.readFileSync(imagePath);
+            if (imgBuf.length > 2 * 1024 * 1024) {
+              logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(imagePath)}`);
+              continue;
+            }
+            await session.send(h.image(imgBuf, stickerMimeType(imagePath)));
             hasSentMessage = true;
             logger.debug(`[sticker] 发送表情包: ${path.basename(imagePath)}`);
           } catch (err) {
