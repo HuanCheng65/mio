@@ -993,6 +993,7 @@ export function apply(ctx: Context, config: Config) {
         recentMessages: recentMessagesFormatted,
         userProfile: memoryUserProfile,
         memories: memoryMemories,
+        stickerSummary: stickerService?.getSummary() || undefined,
       });
 
       // 4. Second LLM call
@@ -1258,6 +1259,7 @@ export function apply(ctx: Context, config: Config) {
         recentMessages: recentMessagesText,
         userProfile: memoryUserProfile,
         memories: memoryMemories,
+        stickerSummary: stickerService?.getSummary() || undefined,
         // Phase 3+ 扩展点：
         // recentSummary: await memory.getRecentSummary(groupId),
         // backgroundKnowledge: await search.augment(recent),
