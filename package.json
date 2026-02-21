@@ -6,17 +6,37 @@
   "typings": "lib/index.d.ts",
   "files": [
     "lib",
-    "dist"
+    "dist",
+    "data"
   ],
   "license": "MIT",
-  "scripts": {},
   "keywords": [
     "chatbot",
     "koishi",
     "plugin"
   ],
-  "devDependencies": {},
+  "scripts": {
+    "build": "tsc"
+  },
   "peerDependencies": {
+    "@koishijs/plugin-console": "^5.11.0",
+    "@wittf/koishi-plugin-adapter-onebot": "^1.0.0",
     "koishi": "^4.18.9"
+  },
+  "devDependencies": {
+    "@koishijs/client": "^5.11.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "koishi": {
+    "description": {
+      "zh": "一个基于大语言模型的拟人化群聊 AI 群友"
+    }
+  },
+  "dependencies": {
+    "@google/genai": "^1.41.0",
+    "lunar-javascript": "^1.7.7",
+    "openai": "^6.22.0",
+    "yaml": "^2.8.2"
   }
 }

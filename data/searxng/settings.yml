@@ -1,0 +1,11 @@
+use_default_settings: true
+
+server:
+  secret_key: "1f1ac559bc3cc3a26552a8d470074a093e69a9f5922232596f7fce376a851b96"
+  bind_address: "0.0.0.0"
+
+search:
+  formats:
+    - html
+    - json # Required for API access
+  default_lang: "zh-CN"
