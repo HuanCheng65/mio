@@ -1,6 +1,7 @@
 import { Context } from 'koishi'
 import { StickerDB } from './db'
 import { StickerIngestion, StickerIngestionInput } from './ingestion'
+import { StickerRetrieval } from './retrieval'
 import { EmbeddingService } from '../memory/embedding'
 import { VLMImageAnalysis } from './types'
 
@@ -16,6 +17,7 @@ export interface StickerConfig {
 export class StickerService {
   private db: StickerDB
   private ingestion: StickerIngestion
+  private retrieval: StickerRetrieval
 
   constructor(
     ctx: Context,
@@ -24,6 +26,12 @@ export class StickerService {
   ) {
     this.db = new StickerDB(ctx)
     this.ingestion = new StickerIngestion(this.db, embedding, config.imageDir)
+    this.retrieval = new StickerRetrieval(this.db, embedding)
+  }
+
+  async resolveSticker(intent: string): Promise<string | null> {
+    if (!this.config.enabled) return null
+    return this.retrieval.resolveSticker(intent)
   }
 
   async maybeCollect(
