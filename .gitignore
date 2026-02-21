@@ -1,6 +1,7 @@
 lib
 dist
 external
+.worktrees
 
 node_modules
 npm-debug.log
