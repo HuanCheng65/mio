@@ -18,6 +18,7 @@ import { getEmojiById, getEmojiByName, getAllEmojis } from '@wittf/koishi-plugin
 import type { OneBotBot } from '@wittf/koishi-plugin-adapter-onebot';
 import { } from '@koishijs/plugin-console';
 import { resolve } from 'path';
+import * as path from 'path';
 
 declare module '@koishijs/plugin-console' {
   interface Events {
@@ -1106,6 +1107,24 @@ export function apply(ctx: Context, config: Config) {
             } catch (err) {
               logger.warn(`[${groupId}] 发送表情失败:`, err);
             }
+          } else if (action.type === 'sticker') {
+            if (!stickerService) {
+              logger.debug('[sticker] 表情包服务未启用，跳过');
+              continue;
+            }
+            try {
+              const imagePath = await stickerService.resolveSticker(action.intent);
+              if (!imagePath) {
+                logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
+                continue;
+              }
+              const fileUrl = 'file:///' + path.resolve(imagePath).replace(/\\/g, '/');
+              await session.send(h.image(fileUrl));
+              hasSentMessageSearch = true;
+              logger.debug(`[sticker] 发送表情包: ${path.basename(imagePath)}`);
+            } catch (err) {
+              logger.warn('[sticker] 发送表情包失败:', err);
+            }
           }
         }
 
@@ -1417,6 +1436,25 @@ export function apply(ctx: Context, config: Config) {
             logger.debug(`[${groupId}] 对消息 ${action.target_msg_id} 发送表情: ${emoji.name}`);
           } catch (err) {
             logger.warn(`[${groupId}] 发送表情失败:`, err);
+          }
+
+        } else if (action.type === 'sticker') {
+          if (!stickerService) {
+            logger.debug('[sticker] 表情包服务未启用，跳过');
+            continue;
+          }
+          try {
+            const imagePath = await stickerService.resolveSticker(action.intent);
+            if (!imagePath) {
+              logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
+              continue;
+            }
+            const fileUrl = 'file:///' + path.resolve(imagePath).replace(/\\/g, '/');
+            await session.send(h.image(fileUrl));
+            hasSentMessage = true;
+            logger.debug(`[sticker] 发送表情包: ${path.basename(imagePath)}`);
+          } catch (err) {
+            logger.warn('[sticker] 发送表情包失败:', err);
           }
 
         } else {
