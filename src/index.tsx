@@ -33,6 +33,7 @@ declare module '@koishijs/plugin-console' {
     'mio/flush-memory'(): Promise<string>
     'mio/migrate-participants'(): Promise<string>
   }
+}
 
 function stickerMimeType(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase()
@@ -42,7 +43,6 @@ function stickerMimeType(filePath: string): string {
   return 'image/jpeg'
 }
 
-}
 
 /**
  * 精确匹配 QQ 表情名，失败时用编辑距离模糊匹配（阈值 ≤ 2）
@@ -895,6 +895,10 @@ export function apply(ctx: Context, config: Config) {
         imageTaskPromise = Promise.all(
           images.map(async (img) => {
             const analysis = await imageProcessor.analyzeImage(img.url);
+            logger.debug(`[sticker] VLM决策: sticker=${analysis.sticker} collect=${analysis.sticker_collect ?? false} | "${analysis.description.slice(0, 40)}"`)
+            if (analysis.sticker && analysis.sticker_collect) {
+              logger.debug(`[sticker] 收藏元数据: vibe="${analysis.sticker_vibe}" style="${analysis.sticker_style}" scene="${analysis.sticker_scene}"`)
+            }
             // Fire-and-forget sticker collection
             if (stickerService && analysis.sticker && analysis.sticker_collect) {
               imageProcessor.downloadBuffer(img.url).then(buf => {

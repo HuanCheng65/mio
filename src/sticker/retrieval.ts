@@ -1,3 +1,4 @@
+import { Logger } from 'koishi'
 import { EmbeddingService } from '../memory/embedding'
 import { StickerDB, ScoredSticker } from './db'
 import { MioStickerRow } from '../memory/tables'
@@ -18,6 +19,7 @@ export class StickerRetrieval {
   constructor(
     private db: StickerDB,
     private embedding: EmbeddingService,
+    private logger: Logger,
   ) {}
 
   async resolveSticker(intent: string): Promise<string | null> {
@@ -46,7 +48,12 @@ export class StickerRetrieval {
     }
 
     const candidates = Array.from(merged.values())
-    if (candidates.length === 0) return null
+    this.logger.debug(`三路检索: vibe=${vibeResults.length} scene=${sceneResults.length} content=${contentResults.length} → merged=${candidates.length} (intent: "${intent}")`)
+
+    if (candidates.length === 0) {
+      this.logger.debug(`检索无候选`)
+      return null
+    }
 
     const ranked = this.rerank(candidates)
     const best = ranked[0]
@@ -55,8 +62,12 @@ export class StickerRetrieval {
                     + (best.scene_similarity ?? 0) * 0.30
                     + (best.content_similarity ?? 0) * 0.30
 
-    if (relevance < RELEVANCE_THRESHOLD) return null
+    if (relevance < RELEVANCE_THRESHOLD) {
+      this.logger.debug(`最佳匹配相关度不足: "${best.description.slice(0, 30)}" relevance=${relevance.toFixed(3)} < ${RELEVANCE_THRESHOLD}`)
+      return null
+    }
 
+    this.logger.debug(`检索命中: "${best.description.slice(0, 40)}" relevance=${relevance.toFixed(3)} finalScore=${best.finalScore?.toFixed(3)}`)
     await this.db.recordUse(best.id)
     return best.image_path
   }

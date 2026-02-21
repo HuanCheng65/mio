@@ -1,4 +1,4 @@
-import { Context } from 'koishi'
+import { Context, Logger } from 'koishi'
 import { StickerDB } from './db'
 import { StickerIngestion, StickerIngestionInput } from './ingestion'
 import { StickerRetrieval } from './retrieval'
@@ -21,16 +21,18 @@ export class StickerService {
   private retrieval: StickerRetrieval
   private maintenance: StickerMaintenance
   private cachedSummary = ''
+  private logger: Logger
 
   constructor(
     ctx: Context,
     private embedding: EmbeddingService,
     private config: StickerConfig,
   ) {
+    this.logger = ctx.logger('mio.sticker')
     this.db = new StickerDB(ctx)
-    this.ingestion = new StickerIngestion(this.db, embedding, config.imageDir)
-    this.retrieval = new StickerRetrieval(this.db, embedding)
-    this.maintenance = new StickerMaintenance(this.db)
+    this.ingestion = new StickerIngestion(this.db, embedding, config.imageDir, this.logger)
+    this.retrieval = new StickerRetrieval(this.db, embedding, this.logger)
+    this.maintenance = new StickerMaintenance(this.db, this.logger)
   }
 
   async runDailyMaintenance(): Promise<void> {

@@ -1,18 +1,25 @@
+import { Logger } from 'koishi'
 import { StickerDB } from './db'
 import { cosineSimilarity } from '../memory/embedding'
 import { MioStickerRow } from '../memory/tables'
 
 export class StickerMaintenance {
-  constructor(private db: StickerDB) {}
+  constructor(
+    private db: StickerDB,
+    private logger: Logger,
+  ) {}
 
   async runDaily(): Promise<void> {
     const active = await this.db.getActiveStickers()
+    let updated = 0
     for (const s of active) {
       const newScore = updateQualityScore(s)
       if (Math.abs(newScore - s.quality_score) > 0.001) {
         await this.db.updateQualityScore(s.id, newScore)
+        updated++
       }
     }
+    this.logger.debug(`日维护完成：共 ${active.length} 张，更新评分 ${updated} 张`)
   }
 
   async runWeeklyDedup(): Promise<void> {
@@ -37,6 +44,7 @@ export class StickerMaintenance {
         }
       }
     }
+    this.logger.debug(`周去重完成：归档 ${archived.size} 张，剩余活跃 ${active.length - archived.size} 张`)
   }
 
   async generateSummary(): Promise<string> {

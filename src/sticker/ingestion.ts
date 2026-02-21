@@ -2,6 +2,7 @@ import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
 import { Jimp, intToRGBA } from 'jimp'
+import { Logger } from 'koishi'
 import { StickerDB } from './db'
 import { EmbeddingService } from '../memory/embedding'
 import { VLMImageAnalysis } from './types'
@@ -9,6 +10,7 @@ import { MioStickerRow } from '../memory/tables'
 
 export const SOFT_LIMIT = 80
 export const HARD_LIMIT = 120
+export const MAX_STICKER_BYTES = 2 * 1024 * 1024  // 2 MB
 
 export interface StickerIngestionInput {
   imageUrl: string
@@ -22,6 +24,7 @@ export class StickerIngestion {
     private db: StickerDB,
     private embedding: EmbeddingService,
     private imageDir: string,
+    private logger: Logger,
   ) {
     if (!fs.existsSync(this.imageDir)) {
       fs.mkdirSync(this.imageDir, { recursive: true })
@@ -31,11 +34,19 @@ export class StickerIngestion {
   async maybeCollect(input: StickerIngestionInput): Promise<void> {
     if (!input.analysis.sticker_collect) return
 
+    // 0. 大小检查，跳过过大的图片防止内存占用过高
+    if (input.imageBuffer.length > MAX_STICKER_BYTES) {
+      this.logger.debug(`图片过大 (${(input.imageBuffer.length / 1024 / 1024).toFixed(1)} MB)，跳过收藏`)
+      return
+    }
+
     // 1. Perceptual hash dedup
     const phash = await computePHash(input.imageBuffer)
+    this.logger.debug(`pHash 计算完成: ${phash} (来自 ${input.sourceUser})`)
     const existing = await this.db.findByPhash(phash)
     if (existing) {
       await this.db.incrementEncounterCount(existing.id)
+      this.logger.debug(`重复图片，encounter_count +1: "${existing.description.slice(0, 30)}"`)
       return
     }
 
@@ -47,19 +58,23 @@ export class StickerIngestion {
     if (!fs.existsSync(imagePath)) {
       fs.writeFileSync(imagePath, input.imageBuffer)
     }
+    this.logger.debug(`文件已保存: ${filename} (${(input.imageBuffer.length / 1024).toFixed(1)} KB)`)
 
     // 3. Three embeddings (batch to save API calls)
     const vibe = input.analysis.sticker_vibe ?? ''
     const scene = input.analysis.sticker_scene ?? ''
     const description = input.analysis.description
+    this.logger.debug(`开始 embedding: vibe="${vibe}" scene="${scene}"`)
     const [vibeEmb, sceneEmb, contentEmb] = await this.embedding.embedBatch([
       vibe, scene, description,
     ])
+    this.logger.debug(`embedding 完成 (dims: ${vibeEmb.length})`)
 
     // 4. Initial quality score
     const vibeTags = vibe.split(/\s+/).filter(Boolean)
     const styleTags = (input.analysis.sticker_style ?? '').split(/\s+/).filter(Boolean)
     const qualityScore = calculateInitialQuality(vibeTags, styleTags)
+    this.logger.debug(`质量评分: ${qualityScore.toFixed(2)} | vibe=[${vibeTags.join(',')}] style=[${styleTags.join(',')}]`)
 
     // 5. Insert row
     const now = Date.now()
@@ -84,6 +99,7 @@ export class StickerIngestion {
       created_at: now,
     }
     await this.db.insert(row)
+    this.logger.debug(`新表情包已收藏: "${description.slice(0, 40)}" quality=${qualityScore.toFixed(2)}`)
 
     // 6. Eviction if over soft limit
     await this.runEviction()
@@ -105,6 +121,7 @@ export class StickerIngestion {
     for (const s of sorted.slice(0, toEvict)) {
       await this.db.archiveSticker(s.id)
     }
+    this.logger.debug(`淘汰 ${Math.min(sorted.length, toEvict)} 张表情包，当前活跃: ${SOFT_LIMIT} 张`)
   }
 }
 
