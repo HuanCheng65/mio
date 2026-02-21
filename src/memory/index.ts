@@ -23,6 +23,7 @@ export class MemoryService {
   private distillationTimer: ReturnType<typeof setTimeout> | null = null
   private silentExtractionCounter: Map<string, number> = new Map()
   private renderer = new ContextRenderer()
+  private stickerService: any = null
 
   constructor(
     private ctx: Context,
@@ -41,6 +42,10 @@ export class MemoryService {
 
   getEmbeddingService(): EmbeddingService {
     return this.embeddingService
+  }
+
+  setStickerService(s: any): void {
+    this.stickerService = s
   }
 
   /**
@@ -134,6 +139,10 @@ export class MemoryService {
    */
   async runDistillation(): Promise<void> {
     await this.distillation.run()
+    if (this.stickerService) {
+      await this.stickerService.runDailyMaintenance()
+      this.ctx.logger('mio.memory').info('表情包日维护完成')
+    }
   }
 
   /**

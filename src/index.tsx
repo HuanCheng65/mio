@@ -384,6 +384,17 @@ export function apply(ctx: Context, config: Config) {
     });
     logger.info('表情包系统已启用');
   }
+  if (stickerService && memory) {
+    memory.setStickerService(stickerService);
+  }
+  if (stickerService) {
+    const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+    const weeklyTimer = setInterval(async () => {
+      await stickerService!.runWeeklyDedup();
+      logger.info('表情包周去重完成');
+    }, WEEK_MS);
+    ctx.on('dispose', () => clearInterval(weeklyTimer));
+  }
 
   // 注册控制台扩展
   ctx.inject(['console'], (ctx) => {
