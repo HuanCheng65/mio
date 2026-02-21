@@ -10,6 +10,7 @@ import { ImageProcessor } from "./pipeline/image-processor";
 import { MemoryService } from "./memory";
 import { reloadPrompts, getPromptManager } from "./memory/prompt-manager";
 import { SearchService } from "./search/router";
+import { StickerService } from "./sticker";
 import type { SearchRequest, Action } from "./types/response";
 import { MessageNormalizer } from "./perception/normalizer";
 import { ContextRenderer } from "./perception/renderer";
@@ -109,6 +110,11 @@ export interface Config {
     bangumiUserAgent: string;
     searchTimeoutMs: number;
     compression: ModelConfig;
+  };
+  sticker: {
+    enabled: boolean;
+    imageDir: string;
+    poolSize: number;
   };
 }
 
@@ -212,6 +218,12 @@ export const Config: Schema<Config> = Schema.object({
       maxTokens: Schema.number().default(150).description("最大 Token 数"),
     }).description("搜索结果压缩模型配置（建议用便宜快速的模型）"),
   }).description("搜索增强配置"),
+
+  sticker: Schema.object({
+    enabled: Schema.boolean().default(true).description('启用表情包收集功能'),
+    imageDir: Schema.string().default('./data/stickers').description('表情包存储目录'),
+    poolSize: Schema.number().default(80).description('活跃池软上限'),
+  }).description('表情包系统配置'),
 });
 
 /**
@@ -359,6 +371,17 @@ export function apply(ctx: Context, config: Config) {
       });
       logger.info(`搜索增强已启用 (compression: ${config.search.compression.providerId}/${config.search.compression.modelName})`);
     }
+  }
+
+  // 初始化表情包系统
+  let stickerService: StickerService | null = null;
+  if (config.sticker?.enabled && memory) {
+    stickerService = new StickerService(ctx, memory.getEmbeddingService(), {
+      enabled: true,
+      imageDir: config.sticker.imageDir,
+      maxPoolSize: config.sticker.poolSize,
+    });
+    logger.info('表情包系统已启用');
   }
 
   // 注册控制台扩展
@@ -847,7 +870,19 @@ export function apply(ctx: Context, config: Config) {
         // 获取上下文消息（前后各 2 条）
         const recentMessages = buffer.getRecent(groupId, 5); // 最近 5 条
         imageTaskPromise = Promise.all(
-          images.map(img => imageProcessor.understandImage(img.url))
+          images.map(async (img) => {
+            const analysis = await imageProcessor.analyzeImage(img.url);
+            // Fire-and-forget sticker collection
+            if (stickerService && analysis.sticker && analysis.sticker_collect) {
+              imageProcessor.downloadBuffer(img.url).then(buf => {
+                if (buf) {
+                  stickerService!.maybeCollect(img.url, buf, analysis, msg.sender)
+                    .catch(err => logger.warn('[sticker] 收集失败:', err));
+                }
+              }).catch(err => logger.warn('[sticker] 图片下载失败:', err));
+            }
+            return analysis.description;
+          })
         ).then(descriptions => {
           // 只返回第一张图片的纯描述（ImageSegment.description 应存纯文本，由 renderer 负责格式化）
           const description = descriptions[0] || null;
