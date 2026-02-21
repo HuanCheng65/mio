@@ -6,6 +6,7 @@ declare module 'koishi' {
     'mio.episodic': MioEpisodicRow
     'mio.relational': MioRelationalRow
     'mio.semantic': MioSemanticRow
+    'mio.sticker': MioStickerRow
   }
 }
 
@@ -62,6 +63,27 @@ export interface MioSemanticRow {
   lastConfirmed: number
   supersededBy: number | null  // 被哪条新 fact 取代
   createdAt: number
+}
+
+export interface MioStickerRow {
+  id: string               // UUID (primary key)
+  image_path: string
+  phash: string
+  description: string
+  vibe_tags: string[]
+  style_tags: string[]
+  scene: string
+  vibe_embedding: number[]
+  scene_embedding: number[]
+  content_embedding: number[]
+  source_user: string
+  collected_at: number
+  use_count: number
+  last_used: number | null
+  encounter_count: number
+  status: string           // 'active' | 'archived'
+  quality_score: number
+  created_at: number
 }
 
 export function extendTables(ctx: Context) {
@@ -128,6 +150,29 @@ export function extendTables(ctx: Context) {
     createdAt: 'unsigned(8)',
   }, {
     autoInc: true,
+    primary: 'id',
+  })
+
+  ctx.model.extend('mio.sticker', {
+    id: 'string(36)',
+    image_path: 'string(512)',
+    phash: 'string(64)',
+    description: 'text',
+    vibe_tags: { type: 'json', initial: [] },
+    style_tags: { type: 'json', initial: [] },
+    scene: { type: 'text', initial: '' },
+    vibe_embedding: { type: 'json', initial: [] },
+    scene_embedding: { type: 'json', initial: [] },
+    content_embedding: { type: 'json', initial: [] },
+    source_user: { type: 'string', initial: '' },
+    collected_at: 'unsigned(8)',
+    use_count: { type: 'unsigned', initial: 0 },
+    last_used: { type: 'unsigned', nullable: true, initial: null },
+    encounter_count: { type: 'unsigned', initial: 1 },
+    status: { type: 'string', initial: 'active' },
+    quality_score: { type: 'float', initial: 0.5 },
+    created_at: 'unsigned(8)',
+  }, {
     primary: 'id',
   })
 }

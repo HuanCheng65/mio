@@ -2,6 +2,7 @@ import { h, Session } from "koishi";
 import { LLMClient, ChatMessage } from "../llm/client";
 import { ModelConfig } from "../llm/provider";
 import { getPromptManager } from "../memory/prompt-manager";
+import { VLMImageAnalysis } from "../sticker/types";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
@@ -74,6 +75,15 @@ export class ImageProcessor {
         })
         .on("error", reject);
     });
+  }
+
+  async downloadBuffer(url: string): Promise<Buffer | null> {
+    try {
+      return await this.downloadImage(url)
+    } catch (error) {
+      console.error(`[ImageProcessor] 下载图片失败: ${url}`, error)
+      return null
+    }
   }
 
   /**
@@ -190,44 +200,56 @@ export class ImageProcessor {
    * @param imageUrl 图片 URL
    */
   async understandImage(imageUrl: string): Promise<string> {
-    // 先检查缓存
-    const cached = await this.getCached(imageUrl);
+    const analysis = await this.analyzeImage(imageUrl)
+    return analysis.description
+  }
+
+  async analyzeImage(imageUrl: string): Promise<VLMImageAnalysis> {
+    // Cache check — cache may hold old plain-text or new JSON
+    const cached = await this.getCached(imageUrl)
     if (cached) {
-      console.log(`[ImageProcessor] 缓存命中: ${imageUrl.substring(0, 50)}...`);
-      return cached;
+      try {
+        const parsed = JSON.parse(cached)
+        if (parsed && typeof parsed.description === 'string') {
+          return parsed as VLMImageAnalysis
+        }
+      } catch {
+        // Old plain-text cache entry — treat as non-sticker description
+        return { description: cached, sticker: false }
+      }
     }
 
-    console.log(
-      `[ImageProcessor] 调用 LLM 理解图片: ${imageUrl.substring(0, 50)}...`,
-    );
+    console.log(`[ImageProcessor] 调用 LLM 分析图片: ${imageUrl.substring(0, 50)}...`)
 
-    const prompt = promptManager.getRaw("image_understanding");
+    const prompt = promptManager.getRaw('image_understanding_sticker')
 
     try {
-      // 构建多模态消息
       const messages: ChatMessage[] = [
         {
-          role: "user",
+          role: 'user',
           content: JSON.stringify([
-            { type: "text", text: prompt },
-            { type: "image_url", image_url: { url: imageUrl } },
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: imageUrl } },
           ]),
         },
-      ];
+      ]
 
       const response = await this.llm.chat(messages, this.modelConfig, {
         maxTokens: this.modelConfig.maxTokens || 500,
-      });
+      })
 
-      const description = response.content.trim();
+      const jsonMatch = response.content.match(/\{[\s\S]*\}/)
+      if (!jsonMatch) throw new Error('VLM response contains no JSON')
 
-      // 存入缓存
-      await this.setCached(imageUrl, description);
+      const analysis: VLMImageAnalysis = JSON.parse(jsonMatch[0])
 
-      return description;
+      // Store JSON string in cache (reusing existing cache infrastructure)
+      await this.setCached(imageUrl, JSON.stringify(analysis))
+
+      return analysis
     } catch (error) {
-      console.error("图片理解失败:", error);
-      return "一张图片";
+      console.error('[ImageProcessor] 图片分析失败:', error)
+      return { description: '一张图片', sticker: false }
     }
   }
 

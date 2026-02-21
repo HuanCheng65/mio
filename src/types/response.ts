@@ -10,7 +10,7 @@ export interface SearchRequest {
   hint: 'anime' | 'galgame' | 'music' | 'general';
 }
 
-export type Action = MessageAction | ReplyAction | ReactAction;
+export type Action = MessageAction | ReplyAction | ReactAction | StickerAction;
 
 export interface MessageAction {
   type: 'message';
@@ -27,4 +27,9 @@ export interface ReactAction {
   type: 'react';
   target_msg_id: string;  // short ID, e.g. "m5"
   emoji_name: string;     // QQ face name, e.g. "赞", "笑哭"
+}
+
+export interface StickerAction {
+  type: 'sticker';
+  intent: string;   // free-text: "笑死 太惨了 幸灾乐祸"
 }

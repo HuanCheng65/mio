@@ -11,6 +11,7 @@ interface PromptOptions {
   memories?: string;
   recentSummary?: string;
   backgroundKnowledge?: string;
+  stickerSummary?: string;
   recentMessages: string;
 }
 
@@ -81,6 +82,11 @@ export class PromptBuilder {
           `\n你对最近提到的内容的模糊了解：\n（这些是你隐约听说过的，不要当精确事实背诵。不确定的就说不太清楚。）\n${options.backgroundKnowledge}`,
         );
       }
+    }
+
+    if (options.stickerSummary) {
+      parts.push('\n');
+      parts.push(options.stickerSummary);
     }
 
     // 群聊消息记录（每次都变）
