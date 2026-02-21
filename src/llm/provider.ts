@@ -16,7 +16,8 @@ export interface ModelConfig {
   modelName: string;
   temperature?: number;
   maxTokens?: number;
-  enableThinking?: boolean; // 是否启用 Gemini thinking mode
+  enableThinking?: boolean;   // 是否启用 Gemini thinking mode
+  thinkingBudget?: number;    // Gemini thinking token 预算（设置后覆盖 enableThinking）
 }
 
 export class ProviderManager {

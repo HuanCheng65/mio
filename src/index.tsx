@@ -151,6 +151,7 @@ export const Config: Schema<Config> = Schema.object({
       modelName: Schema.string().default("deepseek-chat").description("模型名称"),
       temperature: Schema.number().default(0.9).description("温度参数"),
       maxTokens: Schema.number().default(200).description("最大 Token 数"),
+      thinkingBudget: Schema.number().description("Gemini thinking 预算 token 数（0=禁用，不填=模型默认）"),
     }).description("对话生成模型"),
     vision: Schema.object({
       providerId: Schema.string().default("deepseek").description("使用的供应商 ID"),
@@ -987,9 +988,6 @@ export function apply(ctx: Context, config: Config) {
       // 如果请求已被新的 @ 触发取消，跳过执行（新的 processConversation 会处理）
       if (signal.aborted) {
         logger.debug(`[${groupId}] 搜索后请求已被取消，跳过 action 执行`);
-        if (originalNewMessages.length > 0) {
-          lastRespondedAt.set(groupId, originalNewMessages[originalNewMessages.length - 1].timestamp);
-        }
         return;
       }
 
@@ -1007,6 +1005,7 @@ export function apply(ctx: Context, config: Config) {
 
         let hasSentMessageSearch = false;
         for (const action of parsedResponse.actions) {
+          if (signal.aborted) break;
           if (action.type === 'message') {
             const message = action.content;
             if (!message.trim()) continue;
@@ -1074,14 +1073,14 @@ export function apply(ctx: Context, config: Config) {
           }
         }
 
-        // Update reply count (only speak/reply)
+        // Update reply count — only speak/reply counts
         const hourCount = hourlyReplies.get(groupId) || 0;
         if (hasSentMessageSearch) {
           hourlyReplies.set(groupId, hourCount + 1);
         }
       }
 
-      // 7. Update pointer (to last processed message, not now — avoids skipping messages that arrived during LLM call)
+      // 推进指针（LLM 完成决策即推进，silent/react-only 也算）
       if (originalNewMessages.length > 0) {
         lastRespondedAt.set(groupId, originalNewMessages[originalNewMessages.length - 1].timestamp);
       }
@@ -1221,7 +1220,8 @@ export function apply(ctx: Context, config: Config) {
         }
       );
 
-      // 再次检查是否被取消
+      // 再次检查是否被取消（LLM 已返回，但有新消息打断）
+      // 推进指针，避免下一轮把当前批次重复列为新消息
       if (controller.signal.aborted) {
         logger.debug(`[${groupId}] 请求已被取消（LLM 返回后）`);
         return;
@@ -1318,6 +1318,7 @@ export function apply(ctx: Context, config: Config) {
       // 发送消息
       let hasSentMessage = false;
       for (const action of parsedResponse.actions) {
+        if (controller.signal.aborted) break;
         if (action.type === 'message') {
           const message = action.content;
           if (!message.trim()) continue;
@@ -1394,7 +1395,7 @@ export function apply(ctx: Context, config: Config) {
         hourlyReplies.set(groupId, hourCount + 1);
       }
 
-      // 发送成功，推进指针（到处理批次的最后一条消息，而不是当前时间，避免漏掉处理期间到达的消息）
+      // 推进指针（LLM 完成决策即推进，react-only 也算）
       lastRespondedAt.set(groupId, newMessages[newMessages.length - 1].timestamp);
 
       // 记忆系统：写入路径（异步，fire-and-forget）

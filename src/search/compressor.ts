@@ -61,7 +61,7 @@ export class SearchCompressor {
       }
 
       // Format as injection text
-      return `（你刚用手机搜了一下「${query}」：${compressed}。）`;
+      return `（你刚用手机搜了一下「${query}」：${compressed}）`;
     } catch (error) {
       console.error('Search compression error:', error);
       // Fallback: concatenate titles

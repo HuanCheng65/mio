@@ -145,8 +145,10 @@ export class LLMClient {
       maxOutputTokens: maxTokens,
     };
 
-    // 根据配置决定是否启用 thinking mode
-    if (modelConfig.enableThinking === false) {
+    // 根据配置决定 thinking 预算
+    if (modelConfig.thinkingBudget !== undefined) {
+      config.thinkingConfig = { thinkingBudget: modelConfig.thinkingBudget };
+    } else if (modelConfig.enableThinking === false) {
       config.thinkingConfig = { thinkingBudget: 0 };
     }
 
