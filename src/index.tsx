@@ -1138,19 +1138,28 @@ export function apply(ctx: Context, config: Config) {
               continue;
             }
             try {
-              const imagePath = await stickerService.resolveSticker(action.intent);
-              if (!imagePath) {
+              const sticker = await stickerService.resolveSticker(action.intent);
+              if (!sticker) {
                 logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
                 continue;
               }
-              const imgBuf = fs.readFileSync(imagePath);
+              const imgBuf = fs.readFileSync(sticker.imagePath);
               if (imgBuf.length > 2 * 1024 * 1024) {
-                logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(imagePath)}`);
+                logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(sticker.imagePath)}`);
                 continue;
               }
-              await session.send(h.image(imgBuf, stickerMimeType(imagePath)));
+              await session.send(h.image(imgBuf, stickerMimeType(sticker.imagePath)));
               hasSentMessageSearch = true;
-              logger.debug(`[sticker] 发送表情包: ${path.basename(imagePath)}`);
+              logger.debug(`[sticker] 发送表情包: ${path.basename(sticker.imagePath)}`);
+              buffer.push(groupId, {
+                id: crypto.randomUUID(),
+                sender: config.botName,
+                senderId: session.selfId,
+                isBot: true,
+                timestamp: Date.now(),
+                segments: [{ type: 'notice', content: `（发了张表情包——本来想找「${action.intent}」，找到了「${sticker.description}」）` }],
+                mentions: [],
+              });
             } catch (err) {
               logger.warn('[sticker] 发送表情包失败:', err);
             }
@@ -1476,19 +1485,28 @@ export function apply(ctx: Context, config: Config) {
             continue;
           }
           try {
-            const imagePath = await stickerService.resolveSticker(action.intent);
-            if (!imagePath) {
+            const sticker = await stickerService.resolveSticker(action.intent);
+            if (!sticker) {
               logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
               continue;
             }
-            const imgBuf = fs.readFileSync(imagePath);
+            const imgBuf = fs.readFileSync(sticker.imagePath);
             if (imgBuf.length > 2 * 1024 * 1024) {
-              logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(imagePath)}`);
+              logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(sticker.imagePath)}`);
               continue;
             }
-            await session.send(h.image(imgBuf, stickerMimeType(imagePath)));
+            await session.send(h.image(imgBuf, stickerMimeType(sticker.imagePath)));
             hasSentMessage = true;
-            logger.debug(`[sticker] 发送表情包: ${path.basename(imagePath)}`);
+            logger.debug(`[sticker] 发送表情包: ${path.basename(sticker.imagePath)}`);
+            buffer.push(groupId, {
+              id: crypto.randomUUID(),
+              sender: config.botName,
+              senderId: session.selfId,
+              isBot: true,
+              timestamp: Date.now(),
+              segments: [{ type: 'notice', content: `（发了张表情包——本来想找「${action.intent}」，找到了「${sticker.description}」）` }],
+              mentions: [],
+            });
           } catch (err) {
             logger.warn('[sticker] 发送表情包失败:', err);
           }

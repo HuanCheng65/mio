@@ -22,8 +22,20 @@ export class StickerRetrieval {
     private logger: Logger,
   ) {}
 
-  async resolveSticker(intent: string): Promise<string | null> {
-    const intentVec = await this.embedding.embed(intent)
+  async resolveSticker(intent: string): Promise<{ imagePath: string; description: string } | null> {
+    // Query cleaning: remove words that appear in every indexed entry and inflate similarity
+    const cleanIntent = intent
+      .replace(/表情包?|图片?|的样子/g, '')
+      .trim()
+
+    if (!cleanIntent) {
+      this.logger.debug(`检索词清洗后为空，跳过检索 (原始: "${intent}")`)
+      return null
+    }
+
+    this.logger.debug(`检索意图: "${intent}" → "${cleanIntent}"`)
+
+    const intentVec = await this.embedding.embed(cleanIntent)
 
     const [vibeResults, sceneResults, contentResults] = await Promise.all([
       this.db.searchByEmbedding('vibe_embedding', intentVec, 10),
@@ -55,7 +67,7 @@ export class StickerRetrieval {
       return null
     }
 
-    const ranked = this.rerank(candidates)
+    const ranked = this.rerank(candidates, intent)
     const best = ranked[0]
 
     const relevance = (best.vibe_similarity ?? 0) * 0.40
@@ -69,21 +81,33 @@ export class StickerRetrieval {
 
     this.logger.debug(`检索命中: "${best.description.slice(0, 40)}" relevance=${relevance.toFixed(3)} finalScore=${best.finalScore?.toFixed(3)}`)
     await this.db.recordUse(best.id)
-    return best.image_path
+    return { imagePath: best.image_path, description: best.description }
   }
 
-  private rerank(candidates: ScoredSticker[]): ScoredSticker[] {
+  private rerank(candidates: ScoredSticker[], intent: string): ScoredSticker[] {
     const now = Date.now()
-    return candidates.map(s => ({
-      ...s,
-      finalScore: (s.vibe_similarity ?? 0) * W.VIBE
-        + (s.scene_similarity ?? 0) * W.SCENE
-        + (s.content_similarity ?? 0) * W.CONTENT
-        + frequencyBonus(s) * W.FREQUENCY
-        + freshnessBonus(s, now) * W.FRESHNESS
-        + s.quality_score * W.QUALITY
-        - recentRepeatPenalty(s, now) * W.REPEAT,
-    })).sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0))
+    const keywords = intent.split(/[\s,，、.]+/).filter(k => k.length > 0)
+
+    return candidates.map(s => {
+      let matchCount = 0
+      const targetText = (s.vibe_tags.join(' ') + ' ' + s.description).toLowerCase()
+      for (const k of keywords) {
+        if (targetText.includes(k.toLowerCase())) matchCount++
+      }
+      const keywordScore = Math.min(matchCount * 0.15, 0.45)
+
+      return {
+        ...s,
+        finalScore: (s.vibe_similarity ?? 0) * W.VIBE
+          + (s.scene_similarity ?? 0) * W.SCENE
+          + (s.content_similarity ?? 0) * W.CONTENT
+          + frequencyBonus(s) * W.FREQUENCY
+          + freshnessBonus(s, now) * W.FRESHNESS
+          + s.quality_score * W.QUALITY
+          - recentRepeatPenalty(s, now) * W.REPEAT
+          + keywordScore,
+      }
+    }).sort((a, b) => (b.finalScore ?? 0) - (a.finalScore ?? 0))
   }
 }
 

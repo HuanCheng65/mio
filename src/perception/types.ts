@@ -27,7 +27,8 @@ export type MessageSegment =
   | ForwardSegment
   | RecallNotice
   | PokeSegment
-  | UnsupportedSegment;
+  | UnsupportedSegment
+  | NoticeSegment;
 
 export interface TextSegment {
   type: 'text';
@@ -78,6 +79,11 @@ export interface PokeSegment {
 export interface UnsupportedSegment {
   type: 'unsupported';
   hint: string;
+}
+
+export interface NoticeSegment {
+  type: 'notice';
+  content: string;
 }
 
 export interface ReplyInfo {

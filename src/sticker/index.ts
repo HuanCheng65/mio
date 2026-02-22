@@ -50,7 +50,7 @@ export class StickerService {
     return this.cachedSummary
   }
 
-  async resolveSticker(intent: string): Promise<string | null> {
+  async resolveSticker(intent: string): Promise<{ imagePath: string; description: string } | null> {
     if (!this.config.enabled) return null
     return this.retrieval.resolveSticker(intent)
   }

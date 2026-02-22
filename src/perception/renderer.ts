@@ -132,6 +132,9 @@ export class ContextRenderer {
       case 'poke':
         return `[${seg.action} ${seg.target}]`;
 
+      case 'notice':
+        return seg.content;
+
       case 'unsupported':
         return seg.hint;
 
