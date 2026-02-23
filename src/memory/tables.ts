@@ -7,6 +7,7 @@ declare module 'koishi' {
     'mio.relational': MioRelationalRow
     'mio.semantic': MioSemanticRow
     'mio.sticker': MioStickerRow
+    'mio.token_usage': MioTokenUsageRow
   }
 }
 
@@ -84,6 +85,15 @@ export interface MioStickerRow {
   status: string           // 'active' | 'archived'
   quality_score: number
   created_at: number
+}
+
+export interface MioTokenUsageRow {
+  id: number
+  date: string        // YYYY-MM-DD
+  model: string
+  promptTokens: number
+  completionTokens: number
+  calls: number
 }
 
 export function extendTables(ctx: Context) {

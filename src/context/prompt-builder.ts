@@ -42,9 +42,13 @@ export class PromptBuilder {
     parts.push("\n---\n");
     parts.push(promptManager.getRaw("chat_system_layer2_format"));
 
-    // Layer 3: 人设 + Few-Shot 示范（很少变化）
+    // Layer 3: 人设（很少变化）
     parts.push("\n---\n");
     parts.push(this.layer3Persona);
+
+    // Layer 4: Few-Shot 示范（很少变化）
+    parts.push("\n---\n");
+    parts.push(promptManager.getRaw("chat_system_layer4_fewshot"));
 
     // ===== 动态部分（变化频率：偶尔到频繁）=====
 
@@ -104,9 +108,13 @@ export class PromptBuilder {
   /**
    * 构建 User Prompt（简化版，格式说明已移到 system）
    */
-  buildUserPrompt(newMessageMarker: string): string {
+  buildUserPrompt(newMessageMarker: string, recentBotCount: number): string {
+    const activity = recentBotCount > 0
+      ? `（你最近 5 分钟内说了 ${recentBotCount} 条消息。）\n`
+      : '';
     return promptManager.get("chat_user_simple", {
       newMessages: newMessageMarker,
+      recentBotActivity: activity,
     });
   }
 }

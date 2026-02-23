@@ -32,7 +32,7 @@ export class StickerIngestion {
   }
 
   async maybeCollect(input: StickerIngestionInput): Promise<void> {
-    if (!input.analysis.sticker_collect) return
+    if (!input.analysis.collect) return
 
     // 0. 大小检查，跳过过大的图片防止内存占用过高
     if (input.imageBuffer.length > MAX_STICKER_BYTES) {

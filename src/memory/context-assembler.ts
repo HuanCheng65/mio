@@ -37,6 +37,8 @@ export class ContextAssembler {
     participantIds: string[],
     memories: RetrievedMemory[],
   ): Promise<MemoryContext> {
+    const logger = this.ctx.logger('mio.memory');
+
     const [userProfile, episodicText, groupFactsText] = await Promise.all([
       this.buildUserProfile(groupId, participantIds),
       Promise.resolve(this.buildMemoriesText(memories)),
@@ -104,6 +106,8 @@ export class ContextAssembler {
       const vibe = this.workingMemory.getSessionVibe(groupId, userId);
       if (vibe) {
         line += `（${vibe.vibe}）`;
+        const logger = this.ctx.logger('mio.memory');
+        logger.debug(`[${groupId}] 活跃 vibe: ${userId} → ${vibe.vibe} (expires ${new Date(vibe.expiresAt).toLocaleTimeString('zh-CN')})`);
       }
 
       lines.push(line);

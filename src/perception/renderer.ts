@@ -15,11 +15,16 @@ export class ContextRenderer {
     const content = this.renderContent(msg);
     if (!content) return "";
 
-    const selfPrefix = (includePrefix && msg.isBot) ? '[你之前说的] ' : '';
-    const rolePrefix = msg.senderRole ? `【${msg.senderRole}】` : '';   // 身份标识，放昵称前
-    const titleSuffix = msg.senderTitle ? `【${msg.senderTitle}】` : ''; // 自定义称号，放昵称后
+    if (msg.isSystemEvent) {
+      return `〔系统 ${time}〕${content}`;
+    }
 
-    return `${selfPrefix}${rolePrefix}${msg.sender}${titleSuffix}#${msg.senderId}(${time}): ${content}`;
+    const selfPrefix = (includePrefix && msg.isBot) ? '[你之前说的] ' : '';
+    const rolePrefix = msg.senderRole ? `【${msg.senderRole}】` : '';
+    const titleSuffix = msg.senderTitle ? `【${msg.senderTitle}】` : '';
+
+    const reactionSuffix = this.renderReactions(msg);
+    return `${selfPrefix}${rolePrefix}${msg.sender}${titleSuffix}#${msg.senderId}(${time}): ${content}${reactionSuffix}`;
   }
 
   /**
@@ -59,10 +64,6 @@ export class ContextRenderer {
       msgMap.set(shortId, msg);
       line = `[${shortId}] ${line}`;
 
-      // 追加 reaction（有意义的：3+ 人，或 bot 自己消息上的任何 reaction）
-      const reactionSuffix = this.renderReactions(msg);
-      if (reactionSuffix) line += reactionSuffix;
-
       if (newMessageIds.has(msg.id)) {
         fresh.push(line);
       } else {
@@ -85,9 +86,7 @@ export class ContextRenderer {
   private renderReactions(msg: NormalizedMessage): string {
     if (!msg.reactions?.length) return '';
 
-    const significant = msg.reactions.filter(r =>
-      r.count >= 3 || (msg.isBot && r.count >= 1)
-    );
+    const significant = msg.reactions.filter(r => r.count >= 1);
     if (significant.length === 0) return '';
 
     const summary = significant.map(r => `${r.emoji}×${r.count}`).join(' ');

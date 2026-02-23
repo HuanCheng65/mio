@@ -68,7 +68,7 @@ export interface SemanticFact {
   id: string
   groupId: string
   subject: string  // userId 或 "group"（用于 inside_joke）
-  factType: 'preference' | 'trait' | 'experience' | 'opinion' | 'status' | 'inside_joke' | 'preferred_name'
+  factType: 'preference' | 'trait' | 'experience' | 'opinion' | 'status' | 'inside_joke'
   content: string
   confidence: number
   sourceEpisodes: string[]
@@ -129,11 +129,18 @@ export interface ExtractionVibe {
   ttlHours: number
 }
 
+export interface ExtractionNameObservation {
+  userId: string
+  name: string
+  source: 'others_call' | 'self_intro'
+}
+
 export interface ExtractionResult {
   worthRemembering: boolean
   episodes: ExtractionEpisode[]
   relationalUpdates: ExtractionRelUpdate[]
   sessionVibes: ExtractionVibe[]
+  nameObservations: ExtractionNameObservation[]
 }
 
 // ===== Memory Context (给 PromptBuilder) =====

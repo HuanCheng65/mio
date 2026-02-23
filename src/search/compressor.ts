@@ -12,7 +12,7 @@ export class SearchCompressor {
     this.config = config;
   }
 
-  async compress(query: string, results: SearchResult[]): Promise<string> {
+  async compress(query: string, results: SearchResult[], intent: string): Promise<string> {
     if (results.length === 0) {
       return `你刚用手机搜了一下「${query}」，没搜到什么有用的信息。`;
     }
@@ -35,7 +35,8 @@ export class SearchCompressor {
       const promptManager = getPromptManager();
       const prompt = promptManager.get('search_compression_prompt', {
         query,
-        results: resultsText
+        results: resultsText,
+        intent
       });
 
       console.log(`[SearchCompressor] Compressing ${validResults.length} results for "${query}"`);

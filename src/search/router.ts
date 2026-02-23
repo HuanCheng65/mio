@@ -31,7 +31,7 @@ export class SearchService {
   }
 
   async search(request: SearchRequest): Promise<string> {
-    const { query, hint } = request;
+    const { query, hint, intent } = request;
 
     // 1. Select sources based on hint
     const sources: Promise<SearchResult[]>[] = [];
@@ -82,7 +82,7 @@ export class SearchService {
       }
 
       // 5. Compress via LLM
-      const compressed = await this.compressor.compress(query, allResults);
+      const compressed = await this.compressor.compress(query, allResults, intent);
 
       return compressed;
     } catch (error) {

@@ -1,0 +1,45 @@
+services:
+  searxng:
+    image: searxng/searxng:latest
+    container_name: mio-searxng
+    ports:
+      - "18080:8080"
+    volumes:
+      - ./data/searxng:/etc/searxng
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:18080
+    restart: unless-stopped
+
+  rsshub:
+      image: diygod/rsshub:chromium-bundled
+      restart: always
+      ports:
+          - '1200:1200'
+      environment:
+          NODE_ENV: production
+          CACHE_TYPE: redis
+          REDIS_URL: 'redis://redis:6379/'
+      env_file:
+          - .env
+      healthcheck:
+          test: ['CMD', 'curl', '-f', 'http://localhost:1200/healthz']
+          interval: 30s
+          timeout: 10s
+          retries: 3
+      depends_on:
+          - redis
+
+  redis:
+      image: redis:alpine
+      restart: always
+      volumes:
+          - redis-data:/data
+      healthcheck:
+          test: ['CMD', 'redis-cli', 'ping']
+          interval: 30s
+          timeout: 10s
+          retries: 5
+          start_period: 5s
+
+volumes:
+    redis-data:

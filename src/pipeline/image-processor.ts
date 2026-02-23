@@ -211,17 +211,26 @@ export class ImageProcessor {
       try {
         const parsed = JSON.parse(cached)
         if (parsed && typeof parsed.description === 'string') {
+          // Migrate old { sticker: bool, sticker_collect: bool } → new { type, collect }
+          if ('sticker' in parsed && !('type' in parsed)) {
+            parsed.type = parsed.sticker ? 'sticker' : 'other'
+            if (parsed.sticker_collect !== undefined) {
+              parsed.collect = parsed.sticker_collect
+            }
+            delete parsed.sticker
+            delete parsed.sticker_collect
+          }
           return parsed as VLMImageAnalysis
         }
       } catch {
-        // Old plain-text cache entry — treat as non-sticker description
-        return { description: cached, sticker: false }
+        // Old plain-text cache entry — treat as other
+        return { description: cached, type: 'other' }
       }
     }
 
     console.log(`[ImageProcessor] 调用 LLM 分析图片: ${imageUrl.substring(0, 50)}...`)
 
-    const prompt = promptManager.getRaw('image_understanding_sticker')
+    const prompt = promptManager.getRaw('image_understanding')
 
     try {
       const messages: ChatMessage[] = [
@@ -236,6 +245,7 @@ export class ImageProcessor {
 
       const response = await this.llm.chat(messages, this.modelConfig, {
         maxTokens: this.modelConfig.maxTokens || 500,
+        responseFormat: 'json_object',
       })
 
       const jsonMatch = response.content.match(/\{[\s\S]*\}/)
@@ -249,7 +259,7 @@ export class ImageProcessor {
       return analysis
     } catch (error) {
       console.error('[ImageProcessor] 图片分析失败:', error)
-      return { description: '一张图片', sticker: false }
+      return { description: '一张图片', type: 'other' }
     }
   }
 

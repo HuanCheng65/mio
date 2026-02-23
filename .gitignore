@@ -17,3 +17,6 @@ tsconfig.tsbuildinfo
 *.ntvs*
 *.njsproj
 *.sln
+
+.claude
+.env

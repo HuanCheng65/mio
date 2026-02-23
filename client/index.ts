@@ -3,8 +3,8 @@ import Page from './page.vue'
 
 export default (ctx: Context) => {
   ctx.page({
-    name: '澪记忆管理',
-    path: '/mio-memory',
+    name: '澪控制台',
+    path: '/mio',
     icon: 'activity:brain',
     component: Page,
   })

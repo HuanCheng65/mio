@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { ProviderManager, ModelConfig } from "./provider";
 import { GenerateContentConfig } from "@google/genai";
+import { tokenTracker } from "./token-tracker";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -43,25 +44,31 @@ export class LLMClient {
     const signal = options?.signal;
     const responseFormat = options?.responseFormat ?? "text";
 
-    if (providerConfig.type === "gemini") {
-      return this.chatGemini(
-        messages,
-        modelConfig,
-        temperature,
-        maxTokens,
-        signal,
-        responseFormat,
-      );
-    } else {
-      return this.chatOpenAI(
-        messages,
-        modelConfig,
-        temperature,
-        maxTokens,
-        signal,
-        responseFormat,
-      );
-    }
+    const result = providerConfig.type === "gemini"
+      ? await this.chatGemini(
+          messages,
+          modelConfig,
+          temperature,
+          maxTokens,
+          signal,
+          responseFormat,
+        )
+      : await this.chatOpenAI(
+          messages,
+          modelConfig,
+          temperature,
+          maxTokens,
+          signal,
+          responseFormat,
+        );
+
+    tokenTracker.record(
+      modelConfig.modelName,
+      result.usage.promptTokens,
+      result.usage.completionTokens,
+    );
+
+    return result;
   }
 
   private async chatOpenAI(

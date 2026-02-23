@@ -8,9 +8,10 @@ export interface LLMResponse {
 export interface SearchRequest {
   query: string;
   hint: 'anime' | 'galgame' | 'music' | 'general';
+  intent: string;
 }
 
-export type Action = MessageAction | ReplyAction | ReactAction | StickerAction;
+export type Action = MessageAction | ReplyAction | ReactAction | StickerAction | RecallAction;
 
 export interface MessageAction {
   type: 'message';
@@ -32,4 +33,9 @@ export interface ReactAction {
 export interface StickerAction {
   type: 'sticker';
   intent: string;   // free-text: "笑死 太惨了 幸灾乐祸"
+}
+
+export interface RecallAction {
+  type: 'recall';
+  target_msg_id: string;  // short ID, e.g. "m5"
 }

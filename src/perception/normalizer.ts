@@ -25,7 +25,7 @@ export class MessageNormalizer {
     private configBotName: string,
   ) {}
 
-  async normalize(session: Session, skipImageUnderstanding: boolean = false): Promise<NormalizedMessage> {
+  async normalize(session: Session, skipImageUnderstanding: boolean = false, buffer?: MessageBuffer): Promise<NormalizedMessage> {
     const segments: MessageSegment[] = [];
     const mentions: MentionInfo[] = [];
     const botId = session.selfId;
@@ -45,7 +45,7 @@ export class MessageNormalizer {
     }
 
     // 2. 处理引用
-    const replyTo = await this.extractReply(session);
+    const replyTo = await this.extractReply(session, buffer);
 
     // 3. UID / 消息ID 兜底
     const msgId = session.messageId || session.event?.message?.id || crypto.randomUUID();
@@ -182,11 +182,25 @@ export class MessageNormalizer {
     }
   }
 
-  private async extractReply(session: Session): Promise<ReplyInfo | undefined> {
+  private async extractReply(session: Session, buffer?: MessageBuffer): Promise<ReplyInfo | undefined> {
     const quote = session.quote || session.event?.message?.quote;
     if (!quote) return undefined;
 
     const sender = quote.member?.nick || quote.user?.name || quote.user?.nick || '某人';
+
+    // Fast path: look up the quoted message in the buffer by ID.
+    // The buffered message already has resolved image descriptions.
+    if (buffer && quote.id) {
+      const buffered = buffer.findById(quote.id);
+      if (buffered) {
+        let preview = this.buildPreviewFromSegments(buffered.segments);
+        if (!preview && quote.content) {
+          preview = quote.content.replace(/<[^>]+>/g, '').trim();
+        }
+        if (preview.length > 40) preview = preview.slice(0, 40) + '...';
+        return { messageId: quote.id, sender, preview };
+      }
+    }
 
     // 优先走完整的 normalizeElement 管线处理 quote.elements
     // skipImageUnderstanding=true：引用预览不需要理解图片内容，只标注 [图片]
@@ -200,7 +214,7 @@ export class MessageNormalizer {
         switch (seg.type) {
           case 'text':    parts.push(seg.content); break;
           case 'face':    parts.push(`[${seg.name}]`); break;
-          case 'image':   parts.push(seg.isSticker ? '[表情包]' : '[图片]'); break;
+          case 'image':   parts.push(seg.isSticker ? '[表情包]' : (seg.description ? `[图片：${seg.description}]` : '[图片]')); break;
           case 'share':   parts.push(`[分享：${seg.title}]`); break;
           case 'forward': parts.push(`[${seg.summary}]`); break;
           case 'poke':    parts.push(`[${seg.action}]`); break;
@@ -371,6 +385,7 @@ export class MessageNormalizer {
       sender: '系统',
       senderId: 'system',
       isBot: false,
+      isSystemEvent: true,
       timestamp: Date.now(),
       segments: [{
         type: 'recall',
@@ -387,6 +402,23 @@ export class MessageNormalizer {
       .map(s => s.content);
     const full = textParts.join('');
     return full.length > maxLen ? full.slice(0, maxLen) + '...' : full;
+  }
+
+  private buildPreviewFromSegments(segments: MessageSegment[]): string {
+    const parts: string[] = [];
+    for (const seg of segments) {
+      switch (seg.type) {
+        case 'text':    parts.push(seg.content); break;
+        case 'face':    parts.push(`[${seg.name}]`); break;
+        case 'image':   parts.push(seg.isSticker ? '[表情包]' : (seg.description ? `[图片：${seg.description}]` : '[图片]')); break;
+        case 'share':   parts.push(`[分享：${seg.title}]`); break;
+        case 'forward': parts.push(`[${seg.summary}]`); break;
+        case 'poke':    parts.push(`[${seg.action}]`); break;
+        case 'recall':  break; // system events don't belong in a quote preview
+        case 'unsupported': if (seg.hint) parts.push(seg.hint); break;
+      }
+    }
+    return parts.join('').trim();
   }
 
   private stripHtml(html: string): string {

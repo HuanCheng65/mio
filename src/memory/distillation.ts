@@ -243,12 +243,13 @@ export class DistillationPipeline {
         { role: "user", content: "请分析以上记忆并更新认知。" },
       ],
       this.config.distillation,
-      { temperature: 0.3, maxTokens: 1000, responseFormat: "json_object" },
+      { temperature: 0.5, maxTokens: 8192, responseFormat: "json_object" },
     );
 
     const raw = parseJSON(response.content);
     if (!raw) {
       logger.warn(`[${groupId}] 语义蒸馏 LLM 输出解析失败`);
+      logger.debug(response.content);
       return;
     }
 
@@ -426,16 +427,6 @@ export class DistillationPipeline {
       );
     }
 
-    // 后处理：同步 preferred_name facts 到 relationship 表
-    const { updateKnownNames } = await import("./name-learning");
-    for (const fact of result.newFacts || []) {
-      if (fact.factType === "preferred_name") {
-        await updateKnownNames(this.ctx, groupId, fact.subject, fact.content);
-        logger.debug(
-          `[${groupId}] 更新称呼: ${fact.subject} -> ${fact.content}`,
-        );
-      }
-    }
   }
 
   /**

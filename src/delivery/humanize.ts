@@ -8,7 +8,7 @@ export interface UserInfo {
 /**
  * 计算两个字符串的编辑距离（Levenshtein）
  */
-function levenshtein(a: string, b: string): number {
+export function levenshtein(a: string, b: string): number {
   const m = a.length, n = b.length;
   const dp: number[][] = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
   for (let j = 0; j <= n; j++) dp[0][j] = j;

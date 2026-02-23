@@ -11,6 +11,20 @@ import { LLMClient } from '../llm/client'
 import { ProviderManager } from '../llm/provider'
 import { NormalizedMessage } from '../perception/types'
 import { ContextRenderer } from '../perception/renderer'
+import { updateKnownNames } from './name-learning'
+
+export { MemoryExtractionScheduler } from './extraction-scheduler'
+
+/** record() 的返回摘要 */
+export interface RecordSummary {
+  worthRemembering: boolean
+  episodes: number
+  relational: number
+  vibes: number
+  episodeSummaries: string[]
+  relationalSummaries: string[]
+  sessionVibes: string[]
+}
 
 export class MemoryService {
   private embeddingService: EmbeddingService
@@ -93,13 +107,13 @@ export class MemoryService {
   }
 
   /**
-   * 写入路径：异步提取记忆（fire-and-forget）
+   * 写入路径：异步提取记忆
    */
   async record(params: {
     groupId: string
     recentMessages: NormalizedMessage[]
     botName: string
-  }): Promise<void> {
+  }): Promise<RecordSummary> {
     const logger = this.ctx.logger('mio.memory')
 
     try {
@@ -120,9 +134,34 @@ export class MemoryService {
         )
       }
 
+      // 称呼观察 → 直接写入 relational 表（不经过 working memory）
+      for (const obs of result.nameObservations) {
+        try {
+          await updateKnownNames(this.ctx, params.groupId, obs.userId, obs.name, obs.source)
+          logger.debug(`称呼观察: ${obs.userId} → ${obs.name} (${obs.source})`)
+        } catch (err) {
+          logger.warn(`更新称呼失败: ${obs.userId}`, err)
+        }
+      }
+
       await this.workingMemory.ingest(params.groupId, result)
+
+      return {
+        worthRemembering: result.worthRemembering,
+        episodes: result.episodes.length,
+        relational: result.relationalUpdates.length,
+        vibes: result.sessionVibes.length,
+        episodeSummaries: result.episodes.map(e =>
+          `[imp=${e.importance.toFixed(1)} ${e.mioInvolvement}] ${e.summary}`
+        ),
+        relationalSummaries: result.relationalUpdates.map(r =>
+          `${r.displayName}: ${r.event} (${r.emotionalTone})`
+        ),
+        sessionVibes: result.sessionVibes.map(v => `[ttl=${v.ttlHours}] ${v.userId}: ${v.vibe}`),
+      }
     } catch (err) {
       logger.warn('记忆提取失败:', err)
+      return { worthRemembering: false, episodes: 0, relational: 0, vibes: 0, episodeSummaries: [], relationalSummaries: [], sessionVibes: [] }
     }
   }
 

@@ -15,7 +15,8 @@ export interface NormalizedMessage {
   reactions?: ReactionInfo[];    // 消息的 reaction
   recalled?: boolean;            // 是否已被撤回
   recalledAt?: number;           // 撤回时间
-  
+  isSystemEvent?: boolean;       // true for recall/ban/unban notices — renderer omits sender prefix
+
   rawContent?: string;           // 原始 Koishi session.content（保留作为备份）
 }
 

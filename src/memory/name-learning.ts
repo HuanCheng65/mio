@@ -2,30 +2,6 @@ import { Context } from 'koishi'
 import { NameObservation } from './types'
 
 /**
- * 从 semantic fact 内容中解析称呼信息
- */
-export function parseNameFromFact(factContent: string): { name: string; source: 'others_call' | 'self_intro' } | null {
-  // 匹配模式：
-  // "大家都叫他XXX 他自己也这么介绍的" → name="XXX", source="self_intro"
-  // "群里好像都叫他XXX" → name="XXX", source="others_call"
-
-  const selfIntroPattern = /(?:大家|群里|都)(?:都)?叫他([^\s，。]+).*(?:他自己也|自己介绍|自我介绍)/
-  const othersCallPattern = /(?:大家|群里|都)(?:都)?叫他([^\s，。]+)/
-
-  const selfIntroMatch = factContent.match(selfIntroPattern)
-  if (selfIntroMatch) {
-    return { name: selfIntroMatch[1].trim(), source: 'self_intro' }
-  }
-
-  const othersCallMatch = factContent.match(othersCallPattern)
-  if (othersCallMatch) {
-    return { name: othersCallMatch[1].trim(), source: 'others_call' }
-  }
-
-  return null
-}
-
-/**
  * 解析 preferred_name 并选择最佳称呼
  */
 export function resolvePreferredName(observations: NameObservation[]): string | null {
@@ -46,34 +22,32 @@ export function resolvePreferredName(observations: NameObservation[]): string | 
 }
 
 /**
- * 更新用户的已知称呼
+ * 更新用户的已知称呼（接受结构化输入，由 extraction 调用）
  */
 export async function updateKnownNames(
   ctx: Context,
   groupId: string,
   userId: string,
-  factContent: string,
+  name: string,
+  source: 'others_call' | 'self_intro',
 ): Promise<void> {
-  const parsed = parseNameFromFact(factContent)
-  if (!parsed) return
-
   const rows = await ctx.database.get('mio.relational', { groupId, userId })
   if (rows.length === 0) return
 
   const rel = rows[0]
   const names: NameObservation[] = JSON.parse(rel.knownNames || '[]')
 
-  const existing = names.find(n => n.name === parsed.name)
+  const existing = names.find(n => n.name === name)
   const now = Date.now()
 
   if (existing) {
     existing.count++
     existing.lastSeen = now
-    if (parsed.source === 'self_intro') existing.source = 'self_intro'
+    if (source === 'self_intro') existing.source = 'self_intro'
   } else {
     names.push({
-      name: parsed.name,
-      source: parsed.source,
+      name,
+      source,
       count: 1,
       firstSeen: now,
       lastSeen: now,

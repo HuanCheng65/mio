@@ -6,19 +6,21 @@ import { Debouncer } from "./pipeline/debouncer";
 import { LLMClient } from "./llm/client";
 import { ProviderManager, ProviderConfig, ModelConfig } from "./llm/provider";
 import { PromptBuilder } from "./context/prompt-builder";
-import { humanizedSend, resolveAtMentions, UserInfo } from "./delivery/humanize";
+import { humanizedSend, resolveAtMentions, levenshtein, UserInfo } from "./delivery/humanize";
 import { ImageProcessor } from "./pipeline/image-processor";
 import { MemoryService } from "./memory";
+import { MemoryExtractionScheduler } from "./memory/extraction-scheduler";
 import { reloadPrompts, getPromptManager } from "./memory/prompt-manager";
 import { SearchService } from "./search/router";
 import { StickerService } from "./sticker";
-import type { SearchRequest, Action } from "./types/response";
+import { tokenTracker, extendTokenTable, TokenStats } from "./llm/token-tracker";
+import type { SearchRequest, Action, LLMResponse } from "./types/response";
 import { MessageNormalizer } from "./perception/normalizer";
 import { ContextRenderer } from "./perception/renderer";
 import { getEmojiById, getEmojiByName, getAllEmojis } from '@wittf/koishi-plugin-adapter-onebot';
 import type { OneBotBot } from '@wittf/koishi-plugin-adapter-onebot';
+import { } from '@wittf/koishi-plugin-adapter-onebot';
 import { } from '@koishijs/plugin-console';
-import { resolve } from 'path';
 import * as path from 'path';
 
 declare module '@koishijs/plugin-console' {
@@ -32,15 +34,20 @@ declare module '@koishijs/plugin-console' {
     'mio/trigger-distillation'(): Promise<string>
     'mio/flush-memory'(): Promise<string>
     'mio/migrate-participants'(): Promise<string>
+    'mio/token-stats'(): Promise<TokenStats>
+    'mio/token-stats-reset'(): Promise<string>
   }
 }
 
+const MIME_TYPES: Record<string, string> = {
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+};
+
 function stickerMimeType(filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase()
-  if (ext === 'png') return 'image/png'
-  if (ext === 'gif') return 'image/gif'
-  if (ext === 'webp') return 'image/webp'
-  return 'image/jpeg'
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+  return MIME_TYPES[ext] ?? 'image/jpeg';
 }
 
 
@@ -55,27 +62,13 @@ function findEmoji(name: string): { id: string; name: string } | null {
   let best: (typeof all)[0] | null = null;
   let bestDist = Infinity;
   for (const emoji of all) {
-    const dist = emojiLevenshtein(name, emoji.name);
+    const dist = levenshtein(name, emoji.name);
     if (dist < bestDist) {
       bestDist = dist;
       best = emoji;
     }
   }
   return best && bestDist <= 2 ? best : null;
-}
-
-function emojiLevenshtein(a: string, b: string): number {
-  const m = a.length, n = b.length;
-  const dp: number[][] = [];
-  for (let i = 0; i <= m; i++) {
-    dp[i] = [];
-    for (let j = 0; j <= n; j++) {
-      if (i === 0) dp[i][j] = j;
-      else if (j === 0) dp[i][j] = i;
-      else dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n];
 }
 
 export const name = "mio";
@@ -94,7 +87,8 @@ export interface Config {
   };
   bufferSize: number;
   debounce: {
-    waitMs: number;
+    idleMs: number;
+    minWaitMs: number;
     maxWaitMs: number;
   };
   vision: {
@@ -175,13 +169,14 @@ export const Config: Schema<Config> = Schema.object({
       modelName: Schema.string().default("deepseek-chat").description("多模态模型名称（如 gpt-4o-mini）"),
       temperature: Schema.number().default(0.5).description("温度参数"),
       maxTokens: Schema.number().default(500).description("最大 Token 数（Gemini thinking 模型需要更大值）"),
-      enableThinking: Schema.boolean().default(false).description("启用 Gemini thinking mode（思维链）"),
+      thinkingBudget: Schema.number().description("Gemini thinking 预算 token 数（0=禁用，不填=模型默认）"),
     }).description("图片理解模型"),
   }).description("模型配置"),
 
   debounce: Schema.object({
-    waitMs: Schema.number().default(5000).description("停顿判定时间（毫秒）"),
-    maxWaitMs: Schema.number().default(30000).description("最长等待时间（毫秒）"),
+    idleMs: Schema.number().default(5000).description("消息间隔窗口期（毫秒）"),
+    minWaitMs: Schema.number().default(8000).description("基准最短等待时间（毫秒）"),
+    maxWaitMs: Schema.number().default(45000).description("基准最长等待时间（毫秒）"),
   }).description("Debounce 配置"),
 
   vision: Schema.object({
@@ -238,19 +233,6 @@ export const Config: Schema<Config> = Schema.object({
   }).description('表情包系统配置'),
 });
 
-/**
- * 提取文本内容，保留 @ 提及和引用，现已委托给 perception 层处理
- * @param skipImageUnderstanding 如果为 true，图片只从缓存读取，不触发新的理解
- */
-async function extractTextWithMentions(
-  session: Session,
-  normalizer: MessageNormalizer,
-  renderer: ContextRenderer,
-  skipImageUnderstanding: boolean = false
-): Promise<NormalizedMessage> {
-  const normalized = await normalizer.normalize(session, skipImageUnderstanding);
-  return normalized;
-}
 
 /**
  * 检查消息是否显式触发 bot（@ 或提名字）
@@ -279,12 +261,7 @@ function countTrailingBotMessages(messages: NormalizedMessage[]): number {
 /**
  * 验证 LLM 响应格式
  */
-function validateResponse(response: {
-  thought: string;
-  silent: boolean;
-  search: any;
-  actions: any[];
-}, logger: any): void {
+function validateResponse(response: LLMResponse, logger: any): void {
   // If search is set, ignore silent and actions
   if (response.search) {
     if (response.actions && response.actions.length > 0) {
@@ -341,6 +318,15 @@ export function apply(ctx: Context, config: Config) {
   const llm = new LLMClient(providerManager);
   const promptBuilder = new PromptBuilder(config.personaFile);
 
+  // 初始化 Token 用量追踪
+  extendTokenTable(ctx);
+  tokenTracker.init(ctx);
+  const tokenFlushInterval = setInterval(() => tokenTracker.flush(), 60_000);
+  ctx.on('dispose', async () => {
+    clearInterval(tokenFlushInterval);
+    await tokenTracker.flush();
+  });
+
   // 初始化图片处理器
   const imageProcessor = config.vision.enabled
     ? new ImageProcessor(llm, config.models.vision)
@@ -393,12 +379,9 @@ export function apply(ctx: Context, config: Config) {
       imageDir: config.sticker.imageDir,
       maxPoolSize: config.sticker.poolSize,
     });
-    logger.info('表情包系统已启用');
-  }
-  if (stickerService && memory) {
     memory.setStickerService(stickerService);
-  }
-  if (stickerService) {
+    logger.info('表情包系统已启用');
+
     const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
     const weeklyTimer = setInterval(async () => {
       await stickerService!.runWeeklyDedup();
@@ -407,11 +390,22 @@ export function apply(ctx: Context, config: Config) {
     ctx.on('dispose', () => clearInterval(weeklyTimer));
   }
 
+  // 初始化记忆提取调度器
+  let extractionScheduler: MemoryExtractionScheduler | null = null;
+  if (memory) {
+    extractionScheduler = new MemoryExtractionScheduler({
+      minMessages: 30,           // 累积 30 条消息触发批量提取
+      maxWaitMinutes: 15,        // 最多等 15 分钟
+      activeThreshold: 8,        // 澪参与后再累积 8 条消息触发快速提取
+    });
+    logger.info('记忆提取调度器已启用 (batch: 30 条, timeout: 15 分钟, active: 8 条)');
+  }
+
   // 注册控制台扩展
   ctx.inject(['console'], (ctx) => {
     ctx.console.addEntry({
-      dev: resolve(__dirname, '../client/index.ts'),
-      prod: resolve(__dirname, '../dist'),
+      dev: path.resolve(__dirname, '../client/index.ts'),
+      prod: path.resolve(__dirname, '../dist'),
     });
 
     // 获取记忆统计
@@ -595,6 +589,17 @@ export function apply(ctx: Context, config: Config) {
         throw err;
       }
     });
+
+    // Token 用量统计
+    ctx.console.addListener('mio/token-stats', () => {
+      return tokenTracker.getStats();
+    });
+
+    // 重置 Token 统计
+    ctx.console.addListener('mio/token-stats-reset', async () => {
+      await tokenTracker.reset();
+      return '统计已重置';
+    });
   });
 
   // 安全计数器
@@ -602,6 +607,9 @@ export function apply(ctx: Context, config: Config) {
 
   // 每小时重置回复计数
   setInterval(() => hourlyReplies.clear(), 3600_000);
+
+  // 机器人禁言状态（key: groupId）
+  const botMutedGroups = new Map<string, boolean>();
 
   // 图片处理任务追踪
   interface ImageTask {
@@ -617,8 +625,71 @@ export function apply(ctx: Context, config: Config) {
   // 每个群上一次成功回复的时间戳
   const lastRespondedAt = new Map<string, number>();
 
-  // 每个群上一次记忆提取的时间戳
-  const lastExtractedAt = new Map<string, number>();
+  // 记忆提取锁（防止重复触发）
+  const extractionLocks = new Map<string, boolean>();
+
+  /**
+   * 触发记忆提取
+   */
+  async function triggerMemoryExtraction(groupId: string, reason: string): Promise<void> {
+    if (!memory || !extractionScheduler) return;
+
+    // 检查是否已经在提取中
+    if (extractionLocks.get(groupId)) {
+      logger.debug(`[${groupId}] 记忆提取已在进行中，跳过`);
+      return;
+    }
+
+    const pendingCount = extractionScheduler.getPendingCount(groupId);
+    if (pendingCount === 0) {
+      logger.debug(`[${groupId}] 没有新消息需要提取`);
+      return;
+    }
+
+    // 获取自上次提取以来的所有消息
+    const cutoff = extractionScheduler.getLastExtractedAt(groupId);
+    const messages = buffer.getRecent(groupId).filter(m => m.timestamp > cutoff);
+
+    if (messages.length === 0) {
+      logger.debug(`[${groupId}] buffer 中没有新消息（可能已被清理），重置计数器`);
+      extractionScheduler.markExtracted(groupId);
+      return;
+    }
+
+    logger.debug(`[${groupId}] 触发记忆提取 (${reason}, ${messages.length} 条消息, pending=${pendingCount})`);
+
+    // 加锁
+    extractionLocks.set(groupId, true);
+
+    try {
+      const summary = await memory.record({
+        groupId,
+        recentMessages: messages,
+        botName: config.botName,
+      });
+
+      // 使用最后处理的消息时间戳，避免丢失提取期间到达的消息
+      const lastProcessedTimestamp = messages[messages.length - 1].timestamp;
+      extractionScheduler.markExtracted(groupId, lastProcessedTimestamp);
+
+      if (summary.worthRemembering) {
+        const parts = [
+          `记忆提取完成: ${summary.episodes} 条记忆, ${summary.relational} 条关系, ${summary.vibes} 条情绪`,
+          ...summary.episodeSummaries.map(s => `  ep: ${s}`),
+          ...summary.relationalSummaries.map(s => `  rel: ${s}`),
+          ...summary.sessionVibes.map(s => `  vibe: ${s}`),
+        ];
+        logger.debug(`[${groupId}] ${parts.join('\n')}`);
+      } else {
+        logger.debug(`[${groupId}] 记忆提取完成: 无值得记住的内容`);
+      }
+    } catch (err) {
+      logger.warn(`[${groupId}] 记忆提取失败:`, err);
+    } finally {
+      // 解锁
+      extractionLocks.delete(groupId);
+    }
+  }
 
   /**
    * 获取新消息（自上次成功回复以来的消息）
@@ -627,15 +698,6 @@ export function apply(ctx: Context, config: Config) {
     const cutoff = lastRespondedAt.get(groupId) || 0;
     return buffer.getRecent(groupId)
       .filter(m => !m.isBot && m.timestamp > cutoff);
-  }
-
-  /**
-   * 获取用于记忆提取的新消息（自上次提取以来的消息）
-   */
-  function getMessagesForExtraction(groupId: string): NormalizedMessage[] {
-    const cutoff = lastExtractedAt.get(groupId) || 0;
-    const allMessages = buffer.getRecent(groupId); // 获取所有缓存的消息
-    return allMessages.filter(m => m.timestamp > cutoff);
   }
 
   /**
@@ -703,7 +765,7 @@ export function apply(ctx: Context, config: Config) {
   if (config.vision.enabled) {
     logger.info(`图片理解模型: ${config.models.vision.providerId}/${config.models.vision.modelName}`);
   }
-  logger.info(`Debounce: ${config.debounce.waitMs}ms / 最长等待: ${config.debounce.maxWaitMs}ms`);
+  logger.info(`Debounce: idle=${config.debounce.idleMs}ms / min=${config.debounce.minWaitMs}ms / max=${config.debounce.maxWaitMs}ms`);
 
   // 预加载历史消息到 buffer
   let historyLoaded = false;
@@ -762,7 +824,7 @@ export function apply(ctx: Context, config: Config) {
         // 填充到 buffer
         let latestTimestamp = 0;
         for (const msg of messagesToLoad) {
-          // 构造一个伪 session 对象来复用 extractTextWithMentions
+          // 构造伪 session 对象来复用 normalizer
           const fakeSession: any = {
             elements: msg.elements,
             content: msg.content,
@@ -774,7 +836,7 @@ export function apply(ctx: Context, config: Config) {
           };
 
           // 使用 normalizer 处理
-          const normalizedMsg = await normalizer.normalize(fakeSession, true);
+          const normalizedMsg = await normalizer.normalize(fakeSession, true, buffer);
           const timestamp = normalizedMsg.timestamp;
 
           buffer.push(groupId, normalizedMsg);
@@ -785,10 +847,14 @@ export function apply(ctx: Context, config: Config) {
           }
         }
 
-        // 初始化 lastRespondedAt 和 lastExtractedAt 为最新消息的时间戳
+        // 初始化 lastRespondedAt 为最新消息的时间戳
         // 这样预加载的历史消息不会被当成"新消息"
         lastRespondedAt.set(groupId, latestTimestamp);
-        lastExtractedAt.set(groupId, latestTimestamp);
+
+        // 初始化提取调度器的时间戳
+        if (extractionScheduler) {
+          extractionScheduler.markExtracted(groupId);
+        }
 
         const botMessageCount = messagesToLoad.filter(m => m.user?.id === bot.selfId).length;
         logger.info(`[${groupId}] 预加载了 ${messagesToLoad.length} 条历史消息（包含 bot 消息: ${botMessageCount} 条）`);
@@ -815,7 +881,31 @@ export function apply(ctx: Context, config: Config) {
         break;
       }
     }
+
+    // 启动记忆提取超时检查器
+    if (extractionScheduler) {
+      // 为所有启用的群初始化时间戳（避免启动时立即触发超时）
+      for (const groupId of config.enableGroups) {
+        if (extractionScheduler.getLastExtractedAt(groupId) === 0) {
+          extractionScheduler.markExtracted(groupId);
+          logger.debug(`[${groupId}] 初始化记忆提取时间戳`);
+        }
+      }
+
+      extractionScheduler.startTimeoutChecker(config.enableGroups, async (groupId) => {
+        logger.debug(`[${groupId}] 记忆提取超时触发`);
+        await triggerMemoryExtraction(groupId, 'timeout');
+      });
+    }
   });
+
+  function resolveNameFromBuffer(groupId: string, userId: string): string {
+    const recent = buffer.getRecent(groupId);
+    for (let i = recent.length - 1; i >= 0; i--) {
+      if (recent[i].senderId === userId) return recent[i].sender;
+    }
+    return userId;
+  }
 
   // Reaction 事件处理
   ctx.on("internal/session", async (session) => {
@@ -840,16 +930,69 @@ export function apply(ctx: Context, config: Config) {
       const emoji = getEmojiById(String(like.emoji_id));
       const emojiName = emoji?.name ?? `表情${like.emoji_id}`;
       const isAdd = like.count > 0;
-      buffer.handleReaction(msgId, emojiName, userId, isAdd, session.selfId);
+      buffer.handleReaction(msgId, emojiName, userId, isAdd, session.selfId, like.count);
     }
   });
 
-  ctx.on("reaction-added", async (session) => {
-    logger.debug('reaction-added', session);
-  });
+  ctx.on("internal/session", async (session) => {
+    if (session.type !== 'guild-member' && session.subtype !== 'ban') return;
 
-  ctx.on("reaction-removed", async (session) => {
-    logger.debug('reaction-removed', session);
+    const data = (session as any).onebot as {
+      notice_type?: string;
+      sub_type?: string;
+      group_id?: string | number;
+      user_id?: string | number;
+      operator_id?: string | number;
+      duration?: number;
+    } | undefined;
+
+    if (!data || data.notice_type !== 'group_ban') return;
+
+    const groupId = String(data.group_id ?? '');
+    if (!groupId || !config.enableGroups.includes(groupId)) return;
+
+    const userId = String(data.user_id ?? '');
+    const operatorId = String(data.operator_id ?? '');
+    const duration = data.duration ?? 0;
+    const isLift = data.sub_type === 'lift_ban';
+    const isSelf = userId === session.selfId;
+
+    const targetName = isSelf ? config.botName : resolveNameFromBuffer(groupId, userId);
+    const operatorName = resolveNameFromBuffer(groupId, operatorId);
+
+    let noticeText: string;
+    if (isLift) {
+      noticeText = `（${operatorName} 解除了 ${targetName} 的禁言）`;
+    } else {
+      const durationMin = Math.round(duration / 60);
+      noticeText = durationMin > 0
+        ? `（${operatorName} 将 ${targetName} 禁言了 ${durationMin} 分钟）`
+        : `（${operatorName} 将 ${targetName} 禁言了）`;
+    }
+
+    buffer.push(groupId, {
+      id: crypto.randomUUID(),
+      sender: '系统',
+      senderId: 'system',
+      isBot: false,
+      isSystemEvent: true,
+      timestamp: Date.now(),
+      segments: [{ type: 'notice', content: noticeText }],
+      mentions: [],
+    });
+
+    logger.debug(`[${groupId}] 禁言通知: ${noticeText}`);
+
+    // 更新机器人禁言状态
+    if (isSelf) {
+      if (isLift) {
+        botMutedGroups.delete(groupId);
+        logger.info(`[${groupId}] 机器人禁言已解除`);
+      } else {
+        botMutedGroups.set(groupId, true);
+        logger.info(`[${groupId}] 机器人已被禁言`);
+      }
+    }
   });
 
   ctx.on("message-deleted", async (session) => {
@@ -880,8 +1023,7 @@ export function apply(ctx: Context, config: Config) {
     const groupId = session.event.channel?.id;
     if (!groupId || !config.enableGroups.includes(groupId)) return;
     // 立即提取消息
-    let textContent = await extractTextWithMentions(session, normalizer, renderer, false);
-    const msg = textContent; // The replaced function returns NormalizedMessage
+    const msg = await normalizer.normalize(session, false, buffer);
     const messageId = msg.id;
 
     // 检查是否有图片，如果有则异步启动处理（不阻塞）
@@ -895,12 +1037,12 @@ export function apply(ctx: Context, config: Config) {
         imageTaskPromise = Promise.all(
           images.map(async (img) => {
             const analysis = await imageProcessor.analyzeImage(img.url);
-            logger.debug(`[sticker] VLM决策: sticker=${analysis.sticker} collect=${analysis.sticker_collect ?? false} | "${analysis.description.slice(0, 40)}"`)
-            if (analysis.sticker && analysis.sticker_collect) {
+            logger.debug(`[sticker] VLM决策: type=${analysis.type} collect=${analysis.collect ?? false} | "${analysis.description.slice(0, 40)}"`)
+            if (analysis.type === 'sticker' && analysis.collect) {
               logger.debug(`[sticker] 收藏元数据: vibe="${analysis.sticker_vibe}" style="${analysis.sticker_style}" scene="${analysis.sticker_scene}"`)
             }
             // Fire-and-forget sticker collection
-            if (stickerService && analysis.sticker && analysis.sticker_collect) {
+            if (stickerService && analysis.type === 'sticker' && analysis.collect) {
               imageProcessor.downloadBuffer(img.url).then(buf => {
                 if (buf) {
                   stickerService!.maybeCollect(img.url, buf, analysis, msg.sender)
@@ -935,19 +1077,175 @@ export function apply(ctx: Context, config: Config) {
     // 此时 msg 已经是 NormalizedMessage，不再需要拼装 BufferedMessage 了
     buffer.push(groupId, msg);
 
+    // 检查是否应该触发记忆提取
+    if (extractionScheduler) {
+      const decision = extractionScheduler.onNewMessage(groupId, msg.isBot);
+      logger.debug(`[${groupId}] 记忆提取待处理: ${decision.pendingCount} 条消息`);
+      if (decision.shouldExtract) {
+        // Fire-and-forget，不阻塞消息处理
+        triggerMemoryExtraction(groupId, decision.reason!).catch(err => {
+          logger.warn(`[${groupId}] 记忆提取失败:`, err);
+        });
+      }
+    }
+
     // 粗筛：跳过 bot 自己的消息
     if (msg.isBot) return;
 
-    // 检查是否被显式触发
+    // 检查是否被显式触发（@ 或回复 bot 的消息）
     const renderedText = renderer.renderContent(msg);
     const mentionsBot = isMentioningBot(renderedText, config);
+    const repliesToBot = !!(msg.replyTo && buffer.findById(msg.replyTo.messageId)?.isBot);
+    const engaged = mentionsBot || repliesToBot;
 
     // Debounce 触发
-    debouncer.onMessage(groupId, msg, mentionsBot, async () => {
-      // 被 @ 时可以取消旧请求，普通触发时如果有请求在飞就跳过
-      await processConversation(groupId, session, mentionsBot);
+    debouncer.onMessage(groupId, msg, engaged, async () => {
+      await processConversation(groupId, session, engaged);
     });
   });
+
+  /**
+   * 从 buffer 中构建去重的用户列表快照（用于 @ 后处理）
+   */
+  function buildUsersSnapshot(groupId: string): UserInfo[] {
+    const users: UserInfo[] = [];
+    const seenIds = new Set<string>();
+    for (const m of buffer.getRecent(groupId)) {
+      if (!m.isBot && !seenIds.has(m.senderId)) {
+        seenIds.add(m.senderId);
+        users.push({ name: m.sender, id: m.senderId });
+      }
+    }
+    return users;
+  }
+
+  /**
+   * 创建一条 bot 发出的 NormalizedMessage 并推入 buffer
+   */
+  function pushBotMessage(groupId: string, selfId: string, content: string, segmentType: 'text' | 'notice' = 'text'): void {
+    buffer.push(groupId, {
+      id: crypto.randomUUID(),
+      sender: config.botName,
+      senderId: selfId,
+      isBot: true,
+      timestamp: Date.now(),
+      segments: [{ type: segmentType, content }],
+      mentions: [],
+      ...(segmentType === 'text' ? { rawContent: content } : {}),
+    });
+  }
+
+  /**
+   * 执行 LLM 返回的 actions 列表，返回是否发送了消息（用于计数）
+   */
+  async function executeActions(
+    actions: Action[],
+    msgMap: Map<string, NormalizedMessage>,
+    groupId: string,
+    session: Session,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    const usersSnapshot = buildUsersSnapshot(groupId);
+    let hasSentMessage = false;
+
+    for (const action of actions) {
+      if (signal.aborted) break;
+
+      if (action.type === 'message') {
+        if (!action.content.trim()) continue;
+
+        const processed = resolveAtMentions(action.content, usersSnapshot)
+          .replace(/@#(\d+)/g, '<at id="$1"/>');
+        await humanizedSend(session, processed);
+        pushBotMessage(groupId, session.selfId, action.content);
+        hasSentMessage = true;
+
+      } else if (action.type === 'reply') {
+        const realMsg = msgMap.get(action.target_msg_id);
+        if (!realMsg) {
+          logger.warn(`[${groupId}] reply 目标消息不存在: ${action.target_msg_id}`);
+          continue;
+        }
+        if (!action.text?.trim()) continue;
+
+        const processed = resolveAtMentions(action.text, usersSnapshot)
+          .replace(/@#(\d+)/g, '<at id="$1"/>');
+        await humanizedSend(session, `<quote id="${realMsg.id}"/>${processed}`);
+        pushBotMessage(groupId, session.selfId, action.text);
+        hasSentMessage = true;
+
+      } else if (action.type === 'react') {
+        const realMsg = msgMap.get(action.target_msg_id);
+        if (!realMsg) {
+          logger.warn(`[${groupId}] react 目标消息不存在: ${action.target_msg_id}`);
+          continue;
+        }
+
+        const emoji = findEmoji(action.emoji_name);
+        if (!emoji) {
+          logger.warn(`[${groupId}] 未找到表情: ${action.emoji_name}`);
+          continue;
+        }
+
+        try {
+          const bot = session.bot as OneBotBot<any>;
+          await bot.internal.setMsgEmojiLike(realMsg.id, emoji.id);
+          buffer.handleReaction(realMsg.id, emoji.name, session.selfId, true, session.selfId);
+          logger.debug(`[${groupId}] 对消息 ${action.target_msg_id} 发送表情: ${emoji.name}`);
+        } catch (err) {
+          logger.warn(`[${groupId}] 发送表情失败:`, err);
+        }
+
+      } else if (action.type === 'sticker') {
+        if (!stickerService) {
+          logger.debug('[sticker] 表情包服务未启用，跳过');
+          continue;
+        }
+        try {
+          const sticker = await stickerService.resolveSticker(action.intent);
+          if (!sticker) {
+            logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
+            continue;
+          }
+          const imgBuf = fs.readFileSync(sticker.imagePath);
+          if (imgBuf.length > 2 * 1024 * 1024) {
+            logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(sticker.imagePath)}`);
+            continue;
+          }
+          await session.send(h.image(imgBuf, stickerMimeType(sticker.imagePath)));
+          hasSentMessage = true;
+          logger.debug(`[sticker] 发送表情包: ${path.basename(sticker.imagePath)}`);
+          pushBotMessage(groupId, session.selfId, `（发了张表情包——本来想找「${action.intent}」，找到了「${sticker.description}」）`, 'notice');
+        } catch (err) {
+          logger.warn('[sticker] 发送表情包失败:', err);
+        }
+
+      } else if (action.type === 'recall') {
+        const realMsg = msgMap.get(action.target_msg_id);
+        if (!realMsg) {
+          logger.warn(`[${groupId}] recall 目标消息不存在: ${action.target_msg_id}`);
+          continue;
+        }
+        if (!realMsg.isBot) {
+          logger.warn(`[${groupId}] recall 目标消息不是 bot 消息: ${action.target_msg_id}`);
+          continue;
+        }
+
+        try {
+          await session.bot.deleteMessage(session.channelId, realMsg.id);
+          buffer.markRecalled(realMsg.id);
+          logger.debug(`[${groupId}] 撤回消息: ${action.target_msg_id}`);
+        } catch (err) {
+          logger.warn(`[${groupId}] 撤回失败:`, err);
+        }
+
+      } else {
+        logger.warn(`未知的 action 类型: ${(action as any).type}`);
+      }
+    }
+
+    return hasSentMessage;
+  }
 
   /**
    * 处理搜索请求
@@ -975,10 +1273,18 @@ export function apply(ctx: Context, config: Config) {
         .map(m => renderer.renderMessage(m))
         .join('\n');
 
+      const fiveMinAgoSearch = Date.now() - 5 * 60_000;
+      const recentBotCountSearch = buffer.getRecent(groupId)
+        .filter(m => m.isBot && m.timestamp > fiveMinAgoSearch).length;
+      const recentBotActivitySearch = recentBotCountSearch > 0
+        ? `（你最近 5 分钟内说了 ${recentBotCountSearch} 条消息。）\n`
+        : '';
+
       const promptManager = getPromptManager();
       const followupPrompt = promptManager.get('search_followup_prompt', {
         newMessages: newMessagesText,
-        searchInjection: searchInjection
+        searchInjection: searchInjection,
+        recentBotActivity: recentBotActivitySearch,
       });
 
       // 3. Build system prompt (reuse from original context)
@@ -1012,6 +1318,7 @@ export function apply(ctx: Context, config: Config) {
       });
 
       // 4. Second LLM call
+      logger.debug(`[${groupId}] 搜索后调用 LLM...`);
       const response = await llm.chat(
         [
           { role: "system", content: systemPrompt },
@@ -1021,13 +1328,12 @@ export function apply(ctx: Context, config: Config) {
         { signal }
       );
 
+      logger.info(
+        `[${groupId}] 搜索后 LLM 响应: ${response.content} (tokens: ${response.usage.promptTokens}+${response.usage.completionTokens})`,
+      );
+
       // 5. Parse and validate (search must be null)
-      let parsedResponse: {
-        thought: string;
-        silent: boolean;
-        search: any;
-        actions: Action[];
-      };
+      let parsedResponse: LLMResponse;
 
       try {
         const jsonMatch = response.content.match(/\{[\s\S]*\}/);
@@ -1055,120 +1361,10 @@ export function apply(ctx: Context, config: Config) {
 
       // 6. Execute actions if not silent
       if (!parsedResponse.silent && parsedResponse.actions && parsedResponse.actions.length > 0) {
-        // 构建用户列表快照（用于 @ 后处理）
-        const usersSnapshot: UserInfo[] = [];
-        const seenIds = new Set<string>();
-        for (const m of buffer.getRecent(groupId)) {
-          if (!m.isBot && !seenIds.has(m.senderId)) {
-            seenIds.add(m.senderId);
-            usersSnapshot.push({ name: m.sender, id: m.senderId });
-          }
-        }
-
-        let hasSentMessageSearch = false;
-        for (const action of parsedResponse.actions) {
-          if (signal.aborted) break;
-          if (action.type === 'message') {
-            const message = action.content;
-            if (!message.trim()) continue;
-
-            const processedMessage = resolveAtMentions(message, usersSnapshot)
-              .replace(/@#(\d+)/g, '<at id="$1"/>');
-            await humanizedSend(session, processedMessage);
-
-            buffer.push(groupId, {
-              id: crypto.randomUUID(),
-              sender: config.botName,
-              senderId: session.selfId,
-              isBot: true,
-              timestamp: Date.now(),
-              segments: [{ type: 'text', content: message }],
-              mentions: [],
-              rawContent: message
-            });
-            hasSentMessageSearch = true;
-
-          } else if (action.type === 'reply') {
-            const realMsg = searchMsgMap.get(action.target_msg_id);
-            if (!realMsg) {
-              logger.warn(`[${groupId}] reply 目标消息不存在: ${action.target_msg_id}`);
-              continue;
-            }
-            if (!action.text?.trim()) continue;
-
-            const processedText = resolveAtMentions(action.text, usersSnapshot)
-              .replace(/@#(\d+)/g, '<at id="$1"/>');
-            await humanizedSend(session, `<quote id="${realMsg.id}"/>${processedText}`);
-
-            buffer.push(groupId, {
-              id: crypto.randomUUID(),
-              sender: config.botName,
-              senderId: session.selfId,
-              isBot: true,
-              timestamp: Date.now(),
-              segments: [{ type: 'text', content: action.text }],
-              mentions: [],
-              rawContent: action.text
-            });
-            hasSentMessageSearch = true;
-
-          } else if (action.type === 'react') {
-            const realMsg = searchMsgMap.get(action.target_msg_id);
-            if (!realMsg) {
-              logger.warn(`[${groupId}] react 目标消息不存在: ${action.target_msg_id}`);
-              continue;
-            }
-
-            const emoji = findEmoji(action.emoji_name);
-            if (!emoji) {
-              logger.warn(`[${groupId}] 未找到表情: ${action.emoji_name}`);
-              continue;
-            }
-
-            try {
-              const bot = session.bot as OneBotBot<any>;
-              await bot.internal.setMsgEmojiLike(realMsg.id, emoji.id);
-              buffer.handleReaction(realMsg.id, emoji.name, session.selfId, true, session.selfId);
-            } catch (err) {
-              logger.warn(`[${groupId}] 发送表情失败:`, err);
-            }
-          } else if (action.type === 'sticker') {
-            if (!stickerService) {
-              logger.debug('[sticker] 表情包服务未启用，跳过');
-              continue;
-            }
-            try {
-              const sticker = await stickerService.resolveSticker(action.intent);
-              if (!sticker) {
-                logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
-                continue;
-              }
-              const imgBuf = fs.readFileSync(sticker.imagePath);
-              if (imgBuf.length > 2 * 1024 * 1024) {
-                logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(sticker.imagePath)}`);
-                continue;
-              }
-              await session.send(h.image(imgBuf, stickerMimeType(sticker.imagePath)));
-              hasSentMessageSearch = true;
-              logger.debug(`[sticker] 发送表情包: ${path.basename(sticker.imagePath)}`);
-              buffer.push(groupId, {
-                id: crypto.randomUUID(),
-                sender: config.botName,
-                senderId: session.selfId,
-                isBot: true,
-                timestamp: Date.now(),
-                segments: [{ type: 'notice', content: `（发了张表情包——本来想找「${action.intent}」，找到了「${sticker.description}」）` }],
-                mentions: [],
-              });
-            } catch (err) {
-              logger.warn('[sticker] 发送表情包失败:', err);
-            }
-          }
-        }
-
-        // Update reply count — only speak/reply counts
-        const hourCount = hourlyReplies.get(groupId) || 0;
-        if (hasSentMessageSearch) {
+        const hasSent = await executeActions(parsedResponse.actions, searchMsgMap, groupId, session, signal);
+        if (hasSent) {
+          debouncer.markSpoke(groupId);
+          const hourCount = hourlyReplies.get(groupId) || 0;
           hourlyReplies.set(groupId, hourCount + 1);
         }
       }
@@ -1176,17 +1372,6 @@ export function apply(ctx: Context, config: Config) {
       // 推进指针（LLM 完成决策即推进，silent/react-only 也算）
       if (originalNewMessages.length > 0) {
         lastRespondedAt.set(groupId, originalNewMessages[originalNewMessages.length - 1].timestamp);
-      }
-
-      // 8. Extract memories if enabled
-      if (memory && originalNewMessages.length > 0) {
-        memory.record({
-          groupId,
-          recentMessages: originalNewMessages,
-          botName: config.botName,
-        }).catch(err => logger.warn('记忆更新失败:', err));
-
-        lastExtractedAt.set(groupId, Date.now());
       }
     } catch (error) {
       logger.error(`[${groupId}] 搜索处理失败:`, error);
@@ -1215,6 +1400,8 @@ export function apply(ctx: Context, config: Config) {
     const controller = new AbortController();
     activeRequests.set(groupId, controller);
 
+    let newMessages: NormalizedMessage[] = [];
+
     try {
       // 安全检查：每小时回复次数
       const hourCount = hourlyReplies.get(groupId) || 0;
@@ -1238,6 +1425,12 @@ export function apply(ctx: Context, config: Config) {
         return;
       }
 
+      // 安全检查：机器人被禁言时跳过 LLM
+      if (botMutedGroups.get(groupId)) {
+        logger.debug(`[${groupId}] 机器人被禁言中，跳过 LLM 请求`);
+        return;
+      }
+
       // 等待图片处理完成
       await waitForPendingImages(groupId, controller.signal);
 
@@ -1248,7 +1441,7 @@ export function apply(ctx: Context, config: Config) {
       }
 
       // 获取新消息（基于上次成功回复的时间）
-      const newMessages = getNewMessages(groupId);
+      newMessages = getNewMessages(groupId);
 
       if (newMessages.length === 0) {
         logger.debug(`[${groupId}] 没有新消息，跳过`);
@@ -1279,23 +1472,32 @@ export function apply(ctx: Context, config: Config) {
       const allMessages = buffer.getRecent(groupId);
       const newMessageIds = new Set(newMessages.map(m => m.id));
       const { text: recentMessagesText, msgMap } = renderer.render(allMessages, newMessageIds);
+      const currentStickerSummary = stickerService?.getSummary() || undefined;
       const systemPrompt = promptBuilder.buildSystemPrompt({
         groupId,
         userId: session.userId,
         recentMessages: recentMessagesText,
         userProfile: memoryUserProfile,
         memories: memoryMemories,
-        stickerSummary: stickerService?.getSummary() || undefined,
+        stickerSummary: currentStickerSummary,
         // Phase 3+ 扩展点：
         // recentSummary: await memory.getRecentSummary(groupId),
         // backgroundKnowledge: await search.augment(recent),
       });
 
-      const userPrompt = promptBuilder.buildUserPrompt(newMessageMarker);
+      const fiveMinAgo = Date.now() - 5 * 60_000;
+      const recentBotCount = buffer.getRecent(groupId)
+        .filter(m => m.isBot && m.timestamp > fiveMinAgo).length;
+      const userPrompt = promptBuilder.buildUserPrompt(newMessageMarker, recentBotCount);
 
-      // 打印Prompt
-      // logger.debug("系统 Prompt:", systemPrompt);
-      // logger.debug("用户 Prompt:", userPrompt);
+      // Debug: 打印注入的记忆上下文
+      if (memoryUserProfile || memoryMemories || currentStickerSummary) {
+        logger.debug(`[${groupId}] === 记忆注入摘要 ===`
+          + (memoryUserProfile ? `\n[userProfile]\n${memoryUserProfile}` : '')
+          + (memoryMemories ? `\n[memories]\n${memoryMemories}` : '')
+          + (currentStickerSummary ? `\n[stickerSummary]\n${currentStickerSummary}` : '')
+        );
+      }
 
       // 打印新消息（调用 LLM 前）
       logger.debug(`[${groupId}] 本轮新消息 (${newMessages.length} 条):\n${newMessageMarker}`);
@@ -1326,12 +1528,7 @@ export function apply(ctx: Context, config: Config) {
       );
 
       // 解析 JSON 输出
-      let parsedResponse: {
-        thought: string;
-        silent: boolean;
-        search: { query: string; hint: 'anime' | 'galgame' | 'music' | 'general' } | null;
-        actions: Action[];
-      };
+      let parsedResponse: LLMResponse;
       try {
         const jsonMatch = response.content.match(/\{[\s\S]*\}/);
         if (!jsonMatch) {
@@ -1371,25 +1568,6 @@ export function apply(ctx: Context, config: Config) {
           logger.debug(`[${groupId}] 推进指针到最后一条新消息: ${new Date(lastNewMessageTime).toLocaleTimeString()}`);
         }
 
-        // Observer 模式：即使澪没回复，也可能提取记忆
-        // 概率抽样（在 extraction.ts 中实现）
-        if (memory) {
-          const messagesToExtract = getMessagesForExtraction(groupId);
-
-          if (messagesToExtract.length > 0) {
-            memory.record({
-              groupId,
-              recentMessages: messagesToExtract,
-              botName: config.botName,
-            }).then(() => {
-              logger.debug(`[${groupId}] Silent 模式记忆提取完成 (${messagesToExtract.length} 条新消息)`);
-            }).catch(err => logger.warn('记忆更新失败:', err));
-          }
-
-          // 更新指针
-          lastExtractedAt.set(groupId, Date.now());
-        }
-
         return;
       }
 
@@ -1399,147 +1577,16 @@ export function apply(ctx: Context, config: Config) {
         return;
       }
 
-      // 构建用户列表快照（用于 @ 后处理）
-      const usersSnapshot: UserInfo[] = [];
-      const seenIds = new Set<string>();
-      for (const m of buffer.getRecent(groupId)) {
-        if (!m.isBot && !seenIds.has(m.senderId)) {
-          seenIds.add(m.senderId);
-          usersSnapshot.push({ name: m.sender, id: m.senderId });
-        }
-      }
+      const hasSentMessage = await executeActions(parsedResponse.actions, msgMap, groupId, session, controller.signal);
 
-      // 发送消息
-      let hasSentMessage = false;
-      for (const action of parsedResponse.actions) {
-        if (controller.signal.aborted) break;
-        if (action.type === 'message') {
-          const message = action.content;
-          if (!message.trim()) continue;
-
-          const processedMessage = resolveAtMentions(message, usersSnapshot)
-            .replace(/@#(\d+)/g, '<at id="$1"/>');
-          await humanizedSend(session, processedMessage);
-
-          buffer.push(groupId, {
-            id: crypto.randomUUID(),
-            sender: config.botName,
-            senderId: session.selfId,
-            isBot: true,
-            timestamp: Date.now(),
-            segments: [{ type: 'text', content: message }],
-            mentions: [],
-            rawContent: message
-          });
-          hasSentMessage = true;
-
-        } else if (action.type === 'reply') {
-          const realMsg = msgMap.get(action.target_msg_id);
-          if (!realMsg) {
-            logger.warn(`[${groupId}] reply 目标消息不存在: ${action.target_msg_id}`);
-            continue;
-          }
-          if (!action.text?.trim()) continue;
-
-          const processedText = resolveAtMentions(action.text, usersSnapshot)
-            .replace(/@#(\d+)/g, '<at id="$1"/>');
-          await humanizedSend(session, `<quote id="${realMsg.id}"/>${processedText}`);
-
-          buffer.push(groupId, {
-            id: crypto.randomUUID(),
-            sender: config.botName,
-            senderId: session.selfId,
-            isBot: true,
-            timestamp: Date.now(),
-            segments: [{ type: 'text', content: action.text }],
-            mentions: [],
-            rawContent: action.text
-          });
-          hasSentMessage = true;
-
-        } else if (action.type === 'react') {
-          const realMsg = msgMap.get(action.target_msg_id);
-          if (!realMsg) {
-            logger.warn(`[${groupId}] react 目标消息不存在: ${action.target_msg_id}`);
-            continue;
-          }
-
-          const emoji = findEmoji(action.emoji_name);
-          if (!emoji) {
-            logger.warn(`[${groupId}] 未找到表情: ${action.emoji_name}`);
-            continue;
-          }
-
-          try {
-            const bot = session.bot as OneBotBot<any>;
-            await bot.internal.setMsgEmojiLike(realMsg.id, emoji.id);
-            buffer.handleReaction(realMsg.id, emoji.name, session.selfId, true, session.selfId);
-            logger.debug(`[${groupId}] 对消息 ${action.target_msg_id} 发送表情: ${emoji.name}`);
-          } catch (err) {
-            logger.warn(`[${groupId}] 发送表情失败:`, err);
-          }
-
-        } else if (action.type === 'sticker') {
-          if (!stickerService) {
-            logger.debug('[sticker] 表情包服务未启用，跳过');
-            continue;
-          }
-          try {
-            const sticker = await stickerService.resolveSticker(action.intent);
-            if (!sticker) {
-              logger.debug(`[sticker] 没找到匹配的表情包 (intent: ${action.intent})`);
-              continue;
-            }
-            const imgBuf = fs.readFileSync(sticker.imagePath);
-            if (imgBuf.length > 2 * 1024 * 1024) {
-              logger.warn(`[sticker] 文件过大 (${(imgBuf.length / 1024 / 1024).toFixed(1)} MB)，跳过发送: ${path.basename(sticker.imagePath)}`);
-              continue;
-            }
-            await session.send(h.image(imgBuf, stickerMimeType(sticker.imagePath)));
-            hasSentMessage = true;
-            logger.debug(`[sticker] 发送表情包: ${path.basename(sticker.imagePath)}`);
-            buffer.push(groupId, {
-              id: crypto.randomUUID(),
-              sender: config.botName,
-              senderId: session.selfId,
-              isBot: true,
-              timestamp: Date.now(),
-              segments: [{ type: 'notice', content: `（发了张表情包——本来想找「${action.intent}」，找到了「${sticker.description}」）` }],
-              mentions: [],
-            });
-          } catch (err) {
-            logger.warn('[sticker] 发送表情包失败:', err);
-          }
-
-        } else {
-          logger.warn(`未知的 action 类型: ${(action as any).type}`);
-        }
-      }
-
-      // 更新回复计数（仅 speak/reply 算回复）
+      // 更新回复计数 + 标记发言时间（仅 speak/reply 算回复）
       if (hasSentMessage) {
+        debouncer.markSpoke(groupId);
         hourlyReplies.set(groupId, hourCount + 1);
       }
 
       // 推进指针（LLM 完成决策即推进，react-only 也算）
       lastRespondedAt.set(groupId, newMessages[newMessages.length - 1].timestamp);
-
-      // 记忆系统：写入路径（异步，fire-and-forget）
-      if (memory) {
-        const messagesToExtract = getMessagesForExtraction(groupId);
-        if (messagesToExtract.length > 0) {
-          memory.record({
-            groupId,
-            recentMessages: messagesToExtract,
-            botName: config.botName,
-          }).then(() => {
-            logger.debug(`[${groupId}] 回复后记忆提取完成 (${messagesToExtract.length} 条新消息)`);
-          }).catch(err => logger.warn('记忆更新失败:', err));
-
-          // 更新提取指针
-          lastExtractedAt.set(groupId, Date.now());
-        }
-      }
     } catch (error) {
       if (error.name === 'AbortError') {
         // 被取消了，正常流程，不需要报错
@@ -1547,11 +1594,19 @@ export function apply(ctx: Context, config: Config) {
         return;
       }
       logger.error("处理消息时出错:", error);
+      // 非 abort 错误：推进指针，避免同一批消息无限重试
+      if (newMessages && newMessages.length > 0) {
+        lastRespondedAt.set(groupId, newMessages[newMessages.length - 1].timestamp);
+        logger.debug(`[${groupId}] 出错后推进指针，避免重试风暴`);
+      }
     } finally {
       // 只清理自己的 controller（可能已经被新请求覆盖了）
       if (activeRequests.get(groupId) === controller) {
         activeRequests.delete(groupId);
       }
+
+      // 被 abort 的请求不做兜底——新请求会自己处理
+      if (controller.signal.aborted) return;
 
       // 关键：检查处理期间有没有新消息漏掉了
       const unhandled = getNewMessages(groupId);
@@ -1569,5 +1624,6 @@ export function apply(ctx: Context, config: Config) {
   ctx.on("dispose", () => {
     debouncer.dispose();
     if (memory) memory.dispose();
+    if (extractionScheduler) extractionScheduler.dispose();
   });
 }

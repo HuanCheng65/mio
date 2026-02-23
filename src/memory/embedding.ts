@@ -1,4 +1,5 @@
 import { ProviderManager, ModelConfig } from '../llm/provider'
+import { tokenTracker } from '../llm/token-tracker'
 
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length || a.length === 0) return 0
@@ -35,6 +36,12 @@ export class EmbeddingService {
       model: this.modelConfig.modelName,
       input: texts,
     })
+
+    tokenTracker.record(
+      this.modelConfig.modelName,
+      response.usage?.prompt_tokens || 0,
+      0,
+    )
 
     // 按 index 排序确保顺序一致
     return response.data

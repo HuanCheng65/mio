@@ -61,6 +61,7 @@ export class MessageBuffer {
     userId: string,
     isAdd: boolean,
     botId: string,
+    totalCount?: number,
   ): void {
     const msg = this.findById(msgId);
     if (!msg) return;
@@ -73,15 +74,25 @@ export class MessageBuffer {
         existing = { emoji: emojiName, count: 0, includesBot: false, reactors: [] };
         msg.reactions.push(existing);
       }
-      existing.count++;
-      existing.reactors.push(userId);
+      existing.count = totalCount ?? existing.count + 1;
+      if (!existing.reactors.includes(userId)) existing.reactors.push(userId);
       if (userId === botId) existing.includesBot = true;
     } else {
       if (existing) {
-        existing.count = Math.max(0, existing.count - 1);
+        existing.count = totalCount ?? Math.max(0, existing.count - 1);
         existing.reactors = existing.reactors.filter(id => id !== userId);
         if (userId === botId) existing.includesBot = false;
+        if (existing.count === 0) {
+          msg.reactions = msg.reactions.filter(r => r !== existing);
+        }
       }
+    }
+  }
+
+  markRecalled(msgId: string): void {
+    const msg = this.findById(msgId);
+    if (msg) {
+      msg.recalled = true;
     }
   }
 }
