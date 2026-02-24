@@ -13,7 +13,8 @@ import { resolve } from "path";
 export function loadPersona(personaFile: string): string {
   try {
     const personaPath = resolve(__dirname, "../../data/persona", personaFile);
-    return readFileSync(personaPath, "utf-8");
+    const content = readFileSync(personaPath, "utf-8");
+    return content;
   } catch (error) {
     const personaPath = resolve(__dirname, "../../data/persona", personaFile);
     throw new Error(`Failed to load persona file: ${personaFile} at ${personaPath}. Error: ${error}`);

@@ -113,6 +113,7 @@ export interface Config {
     enabled: boolean;
     searxngBaseUrl: string;
     bangumiUserAgent: string;
+    saucenaoApiKey: string;
     searchTimeoutMs: number;
     compression: ModelConfig;
   };
@@ -217,7 +218,8 @@ export const Config: Schema<Config> = Schema.object({
     enabled: Schema.boolean().default(true).description("启用搜索增强功能"),
     searxngBaseUrl: Schema.string().default("http://localhost:18080").description("SearXNG 实例地址"),
     bangumiUserAgent: Schema.string().default("starrydream/mio-bot/1.0").description("Bangumi API User-Agent"),
-    searchTimeoutMs: Schema.number().default(3000).description("搜索超时时间（毫秒）"),
+    saucenaoApiKey: Schema.string().default("").description("SauceNAO API Key (以图搜图，留空不启用)"),
+    searchTimeoutMs: Schema.number().default(5000).description("搜索超时时间（毫秒）"),
     compression: Schema.object({
       providerId: Schema.string().default("deepseek").description("搜索结果压缩供应商 ID"),
       modelName: Schema.string().default("deepseek-chat").description("搜索结果压缩模型名称"),
@@ -317,6 +319,7 @@ export function apply(ctx: Context, config: Config) {
   const debouncer = new Debouncer(config.debounce);
   const llm = new LLMClient(providerManager);
   const promptBuilder = new PromptBuilder(config.personaFile);
+  logger.info(`人设文件已加载: ${config.personaFile} (${promptBuilder.getPersonaLength()} chars, 首行: "${promptBuilder.getPersonaPreview()}")`);
 
   // 初始化 Token 用量追踪
   extendTokenTable(ctx);
@@ -364,6 +367,7 @@ export function apply(ctx: Context, config: Config) {
       searchService = new SearchService(llm, {
         searxngBaseUrl: config.search.searxngBaseUrl,
         bangumiUserAgent: config.search.bangumiUserAgent,
+        saucenaoApiKey: config.search.saucenaoApiKey,
         searchTimeoutMs: config.search.searchTimeoutMs,
         compressionModel: config.search.compression,
       });
@@ -672,12 +676,13 @@ export function apply(ctx: Context, config: Config) {
       const lastProcessedTimestamp = messages[messages.length - 1].timestamp;
       extractionScheduler.markExtracted(groupId, lastProcessedTimestamp);
 
-      if (summary.worthRemembering) {
+      if (summary.worthRemembering || summary.culturalObservations > 0) {
         const parts = [
-          `记忆提取完成: ${summary.episodes} 条记忆, ${summary.relational} 条关系, ${summary.vibes} 条情绪`,
+          `记忆提取完成: ${summary.episodes} 条记忆, ${summary.relational} 条关系, ${summary.vibes} 条情绪, ${summary.culturalObservations} 条文化观察`,
           ...summary.episodeSummaries.map(s => `  ep: ${s}`),
           ...summary.relationalSummaries.map(s => `  rel: ${s}`),
           ...summary.sessionVibes.map(s => `  vibe: ${s}`),
+          ...summary.culturalSummaries.map(s => `  culture: ${s}`),
         ];
         logger.debug(`[${groupId}] ${parts.join('\n')}`);
       } else {
@@ -767,6 +772,22 @@ export function apply(ctx: Context, config: Config) {
   }
   logger.info(`Debounce: idle=${config.debounce.idleMs}ms / min=${config.debounce.minWaitMs}ms / max=${config.debounce.maxWaitMs}ms`);
 
+  // 管理指令
+  ctx.command('mio', '澪管理指令', { authority: 4 });
+
+  ctx.command('mio.reload', '重载 prompt 模板和人设文件', { authority: 4 })
+    .action(async () => {
+      try {
+        reloadPrompts();
+        promptBuilder.reloadPersona();
+        logger.info('[admin] prompts + persona 已重载');
+        return `已重载\nprompts: ${promptBuilder.getPersonaLength()} chars persona, 首行: "${promptBuilder.getPersonaPreview()}"`;
+      } catch (err) {
+        logger.error('[admin] 重载失败:', err);
+        return `重载失败: ${err}`;
+      }
+    });
+
   // 预加载历史消息到 buffer
   let historyLoaded = false;
 
@@ -829,7 +850,14 @@ export function apply(ctx: Context, config: Config) {
             elements: msg.elements,
             content: msg.content,
             quote: msg.quote,
-            event: { message: msg },
+            event: {
+              message: msg,
+              member: msg.member,   // 群内昵称 → event.member.nick
+            },
+            author: msg.user,       // user.nick / user.name
+            username: msg.member?.nick || msg.user?.nick || msg.user?.name,
+            userId: msg.user?.id,
+            timestamp: msg.timestamp,
             selfId: bot.selfId,
             guildId: groupId,
             bot,
@@ -1253,6 +1281,7 @@ export function apply(ctx: Context, config: Config) {
   async function handleSearch(
     searchRequest: SearchRequest,
     originalNewMessages: NormalizedMessage[],
+    msgMap: Map<string, NormalizedMessage>,
     groupId: string,
     session: Session,
     signal: AbortSignal
@@ -1265,7 +1294,20 @@ export function apply(ctx: Context, config: Config) {
     try {
       // 1. Execute search
       logger.debug(`[${groupId}] 执行搜索: ${searchRequest.query} (hint: ${searchRequest.hint})`);
-      const searchInjection = await searchService.search(searchRequest);
+      const resolveImageUrl = (shortMsgId: string, imageIndex: number = 0): string | null => {
+        // Translate short ID (e.g. 'm31') to real NormalizedMessage via the msgMap
+        // from the first LLM round, then extract the image URL by index.
+        const targetMsg = msgMap.get(shortMsgId);
+        if (!targetMsg) {
+          logger.warn(`[${groupId}] resolveImageUrl: 短 ID ${shortMsgId} 在 msgMap 中找不到`);
+          return null;
+        }
+        const imageSegs = targetMsg.segments.filter((s): s is import('./perception/types').ImageSegment => s.type === 'image');
+        if (imageSegs.length === 0) return null;
+        const safeIndex = (imageIndex >= 0 && imageIndex < imageSegs.length) ? imageIndex : 0;
+        return imageSegs[safeIndex]?.url ?? null;
+      };
+      const searchInjection = await searchService.search(searchRequest, resolveImageUrl);
       logger.debug(`[${groupId}] 搜索结果: ${searchInjection}`);
 
       // 2. Build followup prompt
@@ -1295,6 +1337,7 @@ export function apply(ctx: Context, config: Config) {
       // Get memory context if available
       let memoryUserProfile = '';
       let memoryMemories = '';
+      let memoryGroupCulture = '';
 
       if (memory) {
         try {
@@ -1303,6 +1346,7 @@ export function apply(ctx: Context, config: Config) {
           const memCtx = await memory.getMemoryContext(groupId, participantIds, originalNewMessages, allBuffered);
           if (memCtx.userProfile) memoryUserProfile = memCtx.userProfile;
           if (memCtx.memories) memoryMemories = memCtx.memories;
+          if (memCtx.groupCulture) memoryGroupCulture = memCtx.groupCulture;
         } catch (err) {
           logger.warn('获取记忆上下文失败:', err);
         }
@@ -1313,6 +1357,7 @@ export function apply(ctx: Context, config: Config) {
         userId: session.userId,
         recentMessages: recentMessagesFormatted,
         userProfile: memoryUserProfile,
+        groupCulture: memoryGroupCulture,
         memories: memoryMemories,
         stickerSummary: stickerService?.getSummary() || undefined,
       });
@@ -1457,6 +1502,7 @@ export function apply(ctx: Context, config: Config) {
       // 记忆系统：读取路径
       let memoryUserProfile: string | undefined;
       let memoryMemories: string | undefined;
+      let memoryGroupCulture: string | undefined;
       if (memory) {
         try {
           const participantIds = [...new Set(newMessages.map(m => m.senderId))];
@@ -1464,6 +1510,7 @@ export function apply(ctx: Context, config: Config) {
           const memCtx = await memory.getMemoryContext(groupId, participantIds, newMessages, allBuffered);
           if (memCtx.userProfile) memoryUserProfile = memCtx.userProfile;
           if (memCtx.memories) memoryMemories = memCtx.memories;
+          if (memCtx.groupCulture) memoryGroupCulture = memCtx.groupCulture;
         } catch (err) {
           logger.warn('记忆读取失败:', err);
         }
@@ -1478,11 +1525,9 @@ export function apply(ctx: Context, config: Config) {
         userId: session.userId,
         recentMessages: recentMessagesText,
         userProfile: memoryUserProfile,
+        groupCulture: memoryGroupCulture,
         memories: memoryMemories,
         stickerSummary: currentStickerSummary,
-        // Phase 3+ 扩展点：
-        // recentSummary: await memory.getRecentSummary(groupId),
-        // backgroundKnowledge: await search.augment(recent),
       });
 
       const fiveMinAgo = Date.now() - 5 * 60_000;
@@ -1552,8 +1597,17 @@ export function apply(ctx: Context, config: Config) {
 
       // Priority 1: Search takes priority
       if (parsedResponse.search) {
+        // 兜底：如果 LLM 搭配错误（有 target_msg_id 却用了文字搜索 hint），强制纠正为 image
+        if (parsedResponse.search.target_msg_id && parsedResponse.search.hint !== 'image') {
+          logger.warn(
+            `[${groupId}] LLM 搭配错误：target_msg_id="${parsedResponse.search.target_msg_id}" ` +
+            `配了 hint="${parsedResponse.search.hint}"，自动纠正为 hint="image"`
+          );
+          parsedResponse.search.hint = 'image';
+          delete (parsedResponse.search as any).query; // 清掉无效的 query
+        }
         logger.debug("LLM 请求搜索，执行搜索流程");
-        await handleSearch(parsedResponse.search, newMessages, groupId, session, controller.signal);
+        await handleSearch(parsedResponse.search, newMessages, msgMap, groupId, session, controller.signal);
         return;
       }
 
@@ -1625,5 +1679,6 @@ export function apply(ctx: Context, config: Config) {
     debouncer.dispose();
     if (memory) memory.dispose();
     if (extractionScheduler) extractionScheduler.dispose();
+    if (searchService) searchService.dispose();
   });
 }

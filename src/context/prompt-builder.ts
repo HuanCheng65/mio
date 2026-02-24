@@ -8,6 +8,7 @@ interface PromptOptions {
   groupId: string;
   userId: string;
   userProfile?: string;
+  groupCulture?: string;
   memories?: string;
   recentSummary?: string;
   backgroundKnowledge?: string;
@@ -17,9 +18,23 @@ interface PromptOptions {
 
 export class PromptBuilder {
   private layer3Persona: string;
+  private personaFile: string;
 
   constructor(personaFile: string) {
+    this.personaFile = personaFile;
     this.layer3Persona = getPersonaLayer(personaFile);
+  }
+
+  reloadPersona(): void {
+    this.layer3Persona = getPersonaLayer(this.personaFile);
+  }
+
+  getPersonaLength(): number {
+    return this.layer3Persona.length;
+  }
+
+  getPersonaPreview(): string {
+    return this.layer3Persona.split('\n')[0];
   }
 
   /**
@@ -52,16 +67,10 @@ export class PromptBuilder {
 
     // ===== 动态部分（变化频率：偶尔到频繁）=====
 
-    // 当前时间信息（移到后面，避免破坏前面的缓存）
-    const now = new Date();
-    const lunar = Lunar.fromDate(now);
-    const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-    const timeInfo = `\n---\n# 当前时间\n${now.getFullYear()}年${(now.getMonth() + 1).toString().padStart(2, "0")}月${now.getDate().toString().padStart(2, "0")}日 ${weekdays[now.getDay()]} ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}\n农历${lunar.getYearInChinese()}年${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}`;
-    parts.push(timeInfo);
-
-    // 记忆上下文（偶尔变化）
+    // 记忆上下文（偶尔变化，放在时间之前以最大化缓存命中）
     if (
       options.userProfile ||
+      options.groupCulture ||
       options.memories ||
       options.recentSummary ||
       options.backgroundKnowledge
@@ -71,6 +80,10 @@ export class PromptBuilder {
 
       if (options.userProfile) {
         parts.push(`\n关于今天参与对话的人：\n${options.userProfile}`);
+      }
+
+      if (options.groupCulture) {
+        parts.push(`\n你对这个群的了解：\n${options.groupCulture}`);
       }
 
       if (options.memories) {
@@ -92,6 +105,13 @@ export class PromptBuilder {
       parts.push('\n');
       parts.push(options.stickerSummary);
     }
+
+    // 当前时间（放在记忆之后、消息记录之前，避免破坏记忆的缓存）
+    const now = new Date();
+    const lunar = Lunar.fromDate(now);
+    const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+    const timeInfo = `\n---\n# 当前时间\n${now.getFullYear()}年${(now.getMonth() + 1).toString().padStart(2, "0")}月${now.getDate().toString().padStart(2, "0")}日 ${weekdays[now.getDay()]} ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}\n农历${lunar.getYearInChinese()}年${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}`;
+    parts.push(timeInfo);
 
     // 群聊消息记录（每次都变）
     parts.push("\n");
