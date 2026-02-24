@@ -3,5 +3,8 @@ export * from './router';
 export * from './compressor';
 export * from './sources/bangumi';
 export * from './sources/vndb';
+export * from './sources/saucenao';
+export * from './sources/tracemoe';
 export * from './sources/searxng';
+export * from './sources/yandex';
 export * from './utils';

@@ -1,7 +1,7 @@
 import { NormalizedMessage, MessageSegment, ImageSegment } from "./types";
 
 export class ContextRenderer {
-  constructor() {}
+  constructor() { }
 
   /**
    * 将单条预处理消息渲染为供 LLM 阅读的纯文本格式
@@ -98,9 +98,18 @@ export class ContextRenderer {
    */
   renderSegments(segments: MessageSegment[]): string {
     const parts: string[] = [];
+    let imageCounter = 0;
+
+    const hasMultipleImages = segments.filter(s => s.type === 'image').length >= 2;
+
     for (const seg of segments) {
-      const rendered = this.renderSegment(seg);
-      if (rendered) parts.push(rendered);
+      if (seg.type === 'image') {
+        imageCounter++;
+        parts.push(this.renderImage(seg, hasMultipleImages ? imageCounter : undefined));
+      } else {
+        const rendered = this.renderSegment(seg);
+        if (rendered) parts.push(rendered);
+      }
     }
     return parts.join('');
   }
@@ -109,9 +118,6 @@ export class ContextRenderer {
     switch (seg.type) {
       case 'text':
         return seg.content;
-
-      case 'image':
-        return this.renderImage(seg);
 
       case 'face':
         return `[${seg.name}]`;
@@ -138,17 +144,18 @@ export class ContextRenderer {
         return seg.hint;
 
       default:
-        return null;
+        return null; // Note: 'image' is handled directly in renderSegments now
     }
   }
 
-  private renderImage(seg: ImageSegment): string {
+  private renderImage(seg: ImageSegment, imageIndex?: number): string {
+    const prefix = imageIndex ? `图片 ${imageIndex}` : '图片';
     if (seg.description) {
       if (seg.isSticker) {
         return `[表情包：${seg.description}]`;
       }
-      return `[图片：${seg.description}]`;
+      return `[${prefix}：${seg.description}]`;
     }
-    return '[图片]';
+    return `[${prefix}]`;
   }
 }

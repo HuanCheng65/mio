@@ -1,7 +1,7 @@
 import type { SearchResult } from '../types';
 
 export class SearXNGSearch {
-  constructor(private readonly baseUrl: string) {}
+  constructor(private readonly baseUrl: string) { }
 
   async search(query: string, language: string = 'zh-CN'): Promise<SearchResult[]> {
     try {
@@ -25,12 +25,19 @@ export class SearXNGSearch {
       }
 
       // Return top 3 results
-      return data.results.slice(0, 3).map((item: any) => ({
-        title: item.title || '',
-        description: (item.content || '').substring(0, 200),
-        url: item.url || '',
-        source: 'searxng' as const
-      }));
+      return data.results.slice(0, 3).map((item: any) => {
+        let desc = (item.content || '').substring(0, 200);
+        if (item.publishedDate) {
+          const pubTime = new Date(item.publishedDate).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' });
+          desc = `[发布时间: ${pubTime}] ${desc}`;
+        }
+        return {
+          title: item.title || '',
+          description: desc,
+          url: item.url || '',
+          source: 'searxng' as const
+        };
+      });
     } catch (error) {
       console.error('SearXNG search error:', error);
       return [];

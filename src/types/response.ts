@@ -6,8 +6,10 @@ export interface LLMResponse {
 }
 
 export interface SearchRequest {
-  query: string;
-  hint: 'anime' | 'galgame' | 'music' | 'general';
+  query?: string;
+  target_msg_id?: string;
+  target_image_index?: number;
+  hint: 'anime' | 'galgame' | 'music' | 'general' | 'image';
   intent: string;
 }
 

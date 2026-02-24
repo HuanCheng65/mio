@@ -2,5 +2,5 @@ export interface SearchResult {
   title: string;
   description: string;
   url: string;
-  source: 'bangumi' | 'vndb' | 'searxng';
+  source: 'bangumi' | 'vndb' | 'searxng' | 'saucenao' | 'tracemoe' | 'yandex';
 }

@@ -1,11 +1,27 @@
 use_default_settings: true
 
 server:
+  safe_search: 0
   secret_key: "1f1ac559bc3cc3a26552a8d470074a093e69a9f5922232596f7fce376a851b96"
   bind_address: "0.0.0.0"
 
 search:
   formats:
     - html
-    - json # Required for API access
+    - json
   default_lang: "zh-CN"
+
+engines:
+  - name: baidu
+    engine: baidu
+    shortcut: bd
+    disabled: false
+    timeout: 5.0
+  - name: bing
+    engine: bing
+    shortcut: bi
+    disabled: false
+  - name: sogou wechat
+    engine: sogou_wechat
+    short: sogouw
+    disabled: false
