@@ -17,7 +17,7 @@ export class EmbeddingService {
   constructor(
     private providerManager: ProviderManager,
     private modelConfig: ModelConfig,
-  ) {}
+  ) { }
 
   async embed(text: string): Promise<number[]> {
     const result = await this.embedBatch([text])
@@ -40,6 +40,7 @@ export class EmbeddingService {
     tokenTracker.record(
       this.modelConfig.modelName,
       response.usage?.prompt_tokens || 0,
+      0,
       0,
     )
 

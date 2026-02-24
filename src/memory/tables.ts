@@ -1,5 +1,4 @@
 import { Context } from 'koishi'
-import { SignificantEvent } from './types'
 
 declare module 'koishi' {
   interface Tables {
@@ -22,12 +21,8 @@ export interface MioEpisodicRow {
   emotionalValence: number
   emotionalIntensity: number
   mioInvolvement: string
-  accessCount: number
-  lastAccessed: number
   eventTime: number
   archived: boolean
-  distilled: boolean
-  distilledAt: number
   createdAt: number
 }
 
@@ -42,9 +37,7 @@ export interface MioRelationalRow {
   recentImpressionUpdatedAt: number
   closenessTier: string
   interactionCount: number
-  recentInteractionCount: number
   lastInteraction: number
-  significantEvents: SignificantEvent[]
   knownNames: string  // JSON: NameObservation[]
   preferredName: string | null
   createdAt: number
@@ -93,6 +86,7 @@ export interface MioTokenUsageRow {
   model: string
   promptTokens: number
   completionTokens: number
+  cachedTokens: number
   calls: number
 }
 
@@ -108,12 +102,8 @@ export function extendTables(ctx: Context) {
     emotionalValence: { type: 'float', initial: 0 },
     emotionalIntensity: { type: 'float', initial: 0 },
     mioInvolvement: { type: 'string', initial: 'observer' },
-    accessCount: { type: 'unsigned', initial: 0 },
-    lastAccessed: 'unsigned(8)',
     eventTime: 'unsigned(8)',
     archived: { type: 'boolean', initial: false },
-    distilled: { type: 'boolean', initial: false },
-    distilledAt: 'unsigned(8)',
     createdAt: 'unsigned(8)',
   }, {
     autoInc: true,
@@ -131,9 +121,7 @@ export function extendTables(ctx: Context) {
     recentImpressionUpdatedAt: 'unsigned(8)',
     closenessTier: { type: 'string', initial: 'stranger' },
     interactionCount: { type: 'unsigned', initial: 0 },
-    recentInteractionCount: { type: 'unsigned', initial: 0 },
     lastInteraction: 'unsigned(8)',
-    significantEvents: { type: 'json', initial: [] },
     knownNames: { type: 'text', initial: '[]' },
     preferredName: { type: 'string', nullable: true, initial: null },
     createdAt: 'unsigned(8)',

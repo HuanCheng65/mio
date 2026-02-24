@@ -1,8 +1,8 @@
 import { Context } from 'koishi'
 import {
-  EpisodicMemory, RelationalMemory, SessionVibe,
-  ExtractionResult, ExtractionEpisode, SignificantEvent,
-  MemoryConfig, ClosenessTier,
+  SessionVibe,
+  ExtractionResult,
+  MemoryConfig,
 } from './types'
 import { EmbeddingService, cosineSimilarity } from './embedding'
 
@@ -19,16 +19,8 @@ interface PendingEpisodic {
   eventTime: number
 }
 
-interface PendingRelUpdate {
-  groupId: string
-  userId: string
-  displayName: string
-  event: SignificantEvent
-}
-
 export class WorkingMemory {
   private pendingEpisodic: PendingEpisodic[] = []
-  private pendingRelUpdates: PendingRelUpdate[] = []
   private sessionVibes: Map<string, SessionVibe> = new Map()
   private flushTimer: ReturnType<typeof setTimeout> | null = null
   private config: MemoryConfig
@@ -42,7 +34,7 @@ export class WorkingMemory {
   }
 
   /**
-   * 接收提取结果，写入内存缓冲
+   * 接收提取结果，写入内存缓冲（仅 episodic + vibes）
    */
   async ingest(groupId: string, result: ExtractionResult): Promise<void> {
     if (!result.worthRemembering) return
@@ -106,23 +98,6 @@ export class WorkingMemory {
       }
     }
 
-    // 关系更新
-    for (const rel of result.relationalUpdates) {
-      this.pendingRelUpdates.push({
-        groupId,
-        userId: rel.userId,
-        displayName: rel.displayName,
-        event: {
-          timestamp: now,
-          description: rel.event,
-          emotionalTone: rel.emotionalTone,
-          importance: rel.importance,
-          sourceEpisodeId: '',
-          consumed: false,
-        },
-      })
-    }
-
     // Session vibes（直接生效）
     for (const vibe of result.sessionVibes) {
       const key = `${groupId}:${vibe.userId}`
@@ -163,25 +138,16 @@ export class WorkingMemory {
   }
 
   /**
-   * 获取某群的 pending 关系更新
-   */
-  getPendingRelUpdates(groupId: string): PendingRelUpdate[] {
-    return this.pendingRelUpdates.filter(r => r.groupId === groupId)
-  }
-
-  /**
-   * 批量写入 SQLite
+   * 批量写入 SQLite（仅 episodic）
    */
   async flush(): Promise<void> {
     const logger = this.ctx.logger('mio.memory')
-    if (this.pendingEpisodic.length === 0 && this.pendingRelUpdates.length === 0) return
+    if (this.pendingEpisodic.length === 0) return
 
     const epCount = this.pendingEpisodic.length
-    const relCount = this.pendingRelUpdates.length
     const now = Date.now()
 
     try {
-      // 写入 episodic
       for (const ep of this.pendingEpisodic) {
         await this.ctx.database.create('mio.episodic', {
           groupId: ep.groupId,
@@ -193,100 +159,17 @@ export class WorkingMemory {
           emotionalValence: ep.emotionalValence,
           emotionalIntensity: ep.emotionalIntensity,
           mioInvolvement: ep.mioInvolvement,
-          accessCount: 0,
-          lastAccessed: now,
           eventTime: ep.eventTime,
           archived: false,
-          distilled: false,
-          distilledAt: 0,
           createdAt: now,
         })
       }
 
-      // 写入 relational updates
-      for (const rel of this.pendingRelUpdates) {
-        await this.upsertRelational(rel, now)
-      }
-
       this.pendingEpisodic = []
-      this.pendingRelUpdates = []
-      logger.info(`Flush 完成: ${epCount} episodic, ${relCount} relational`)
+      logger.info(`Flush 完成: ${epCount} episodic`)
     } catch (err) {
       logger.error('Flush 失败:', err)
     }
-  }
-
-  private async upsertRelational(rel: PendingRelUpdate, now: number) {
-    // 查找现有记录
-    const existing = await this.ctx.database.get('mio.relational', {
-      groupId: rel.groupId,
-      userId: rel.userId,
-    })
-
-    if (existing.length > 0) {
-      const record = existing[0]
-      const events: SignificantEvent[] = Array.isArray(record.significantEvents)
-        ? record.significantEvents
-        : []
-      events.push(rel.event)
-      // 只保留最近 20 条
-      const trimmed = events.slice(-20)
-
-      const newCount = record.interactionCount + 1
-      const tier = this.computeClosenessTier(
-        newCount, record.recentInteractionCount + 1, record.lastInteraction,
-        (record.closenessTier || 'stranger') as ClosenessTier,
-      )
-
-      await this.ctx.database.set('mio.relational', { id: record.id }, {
-        displayName: rel.displayName,
-        interactionCount: newCount,
-        recentInteractionCount: record.recentInteractionCount + 1,
-        lastInteraction: now,
-        significantEvents: trimmed,
-        closenessTier: tier,
-        updatedAt: now,
-      })
-    } else {
-      await this.ctx.database.create('mio.relational', {
-        groupId: rel.groupId,
-        userId: rel.userId,
-        displayName: rel.displayName,
-        coreImpression: '',
-        coreImpressionUpdatedAt: now,
-        recentImpression: '',
-        recentImpressionUpdatedAt: now,
-        closenessTier: 'stranger',
-        interactionCount: 1,
-        recentInteractionCount: 1,
-        lastInteraction: now,
-        significantEvents: [rel.event],
-        createdAt: now,
-        updatedAt: now,
-      })
-    }
-  }
-
-  private computeClosenessTier(
-    total: number, recent: number, lastInteraction: number, currentTier?: ClosenessTier,
-  ): ClosenessTier {
-    const daysSince = (Date.now() - lastInteraction) / 86400_000
-
-    // 30 天无互动 → 降一级（不直接跳到 stranger）
-    if (daysSince > 30 && currentTier) {
-      const downgradeMap: Record<ClosenessTier, ClosenessTier> = {
-        close: 'familiar',
-        familiar: 'acquaintance',
-        acquaintance: 'stranger',
-        stranger: 'stranger',
-      }
-      return downgradeMap[currentTier]
-    }
-
-    if (total >= 50 && recent >= 5) return 'close'
-    if (total >= 15 && recent >= 2) return 'familiar'
-    if (total >= 3) return 'acquaintance'
-    return 'stranger'
   }
 
   private resetFlushTimer() {

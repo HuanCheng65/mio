@@ -1,7 +1,6 @@
 import { Context } from "koishi";
 import { LLMClient } from "../llm/client";
-import { ModelConfig } from "../llm/provider";
-import { MemoryConfig, DistillationResult, SignificantEvent } from "./types";
+import { MemoryConfig, DistillationResult } from "./types";
 import { MioEpisodicRow, MioRelationalRow, MioSemanticRow } from "./tables";
 import { getPromptManager } from "./prompt-manager";
 import { EmbeddingService, cosineSimilarity } from "./embedding";
@@ -26,15 +25,6 @@ function formatEpisodes(episodes: MioEpisodicRow[]): string {
       const date = new Date(e.eventTime).toLocaleDateString("zh-CN");
       const participants = e.participants.join(", ");
       return `[ep=${e.id}] ${date} [参与者: ${participants}] ${e.summary}`;
-    })
-    .join("\n");
-}
-
-function formatEvents(events: SignificantEvent[]): string {
-  return events
-    .map((e) => {
-      const date = new Date(e.timestamp).toLocaleDateString("zh-CN");
-      return `${date} ${e.description}（${e.emotionalTone}）`;
     })
     .join("\n");
 }
@@ -91,8 +81,8 @@ export class DistillationPipeline {
     // Step 0: 补充缺失的 embeddings（历史数据修复）
     await this.backfillEmbeddings(groupId);
 
-    // Step 1: Semantic Facts 蒸馏
-    await this.distillSemanticFacts(groupId);
+    // Step 1: Semantic Facts 维护
+    await this.maintainSemanticFacts(groupId);
 
     // Step 2 & 3: Impression 更新
     const relations = await this.ctx.database.get("mio.relational", {
@@ -104,8 +94,8 @@ export class DistillationPipeline {
       // 只处理近 7 天有互动的用户
       if (rel.lastInteraction < sevenDaysAgo) continue;
 
-      await this.updateRecentImpression(rel);
-      await this.updateCoreImpression(rel);
+      await this.updateRecentImpression(groupId, rel);
+      await this.updateCoreImpression(groupId, rel);
     }
 
     logger.info(`[${groupId}] 蒸馏完成`);
@@ -204,23 +194,23 @@ export class DistillationPipeline {
   }
 
   /**
-   * Step 1: Semantic Facts 蒸馏
+   * Step 1: Semantic Facts 维护（原 distillSemanticFacts）
+   * 纯时间窗口，不再用 distilled 过滤
    */
-  private async distillSemanticFacts(groupId: string): Promise<void> {
+  private async maintainSemanticFacts(groupId: string): Promise<void> {
     const logger = this.ctx.logger("mio.distillation");
     const sevenDaysAgo = Date.now() - 7 * 86400_000;
 
-    // 加载近 7 天未 archived、未 distilled 的 episodic memories
+    // 加载近 7 天的 episodic memories（纯时间窗口）
     const recentEpisodes = (
       await this.ctx.database.get("mio.episodic", {
         groupId,
         archived: false,
-        distilled: false,
       })
     ).filter((e) => e.eventTime >= sevenDaysAgo);
 
     if (recentEpisodes.length === 0) {
-      logger.debug(`[${groupId}] 无近期记忆，跳过语义蒸馏`);
+      logger.debug(`[${groupId}] 无近期记忆，跳过语义维护`);
       return;
     }
 
@@ -248,7 +238,7 @@ export class DistillationPipeline {
 
     const raw = parseJSON(response.content);
     if (!raw) {
-      logger.warn(`[${groupId}] 语义蒸馏 LLM 输出解析失败`);
+      logger.warn(`[${groupId}] 语义维护 LLM 输出解析失败`);
       logger.debug(response.content);
       return;
     }
@@ -412,35 +402,34 @@ export class DistillationPipeline {
       decayed: result.decayedFacts?.length || 0,
     };
     logger.info(
-      `[${groupId}] 语义蒸馏: +${counts.new} 新, ${counts.confirmed} 确认, ${counts.evolved} 演进, ${counts.decayed} 衰减`,
+      `[${groupId}] 语义维护: +${counts.new} 新, ${counts.confirmed} 确认, ${counts.evolved} 演进, ${counts.decayed} 衰减`,
     );
-
-    // 标记这些 episodes 为已蒸馏（信息已备份到 semantic）
-    if (episodeIds.length > 0) {
-      await this.ctx.database.set(
-        "mio.episodic",
-        { id: { $in: episodeIds } },
-        { distilled: true, distilledAt: now },
-      );
-      logger.debug(
-        `[${groupId}] 已标记 ${episodeIds.length} 条 episodic memories 为已蒸馏`,
-      );
-    }
-
   }
 
   /**
    * Step 2: Recent Impression 重写
+   * 输入源：该用户近 7 天的 active semantic facts
    */
-  private async updateRecentImpression(rel: MioRelationalRow): Promise<void> {
+  private async updateRecentImpression(groupId: string, rel: MioRelationalRow): Promise<void> {
     const logger = this.ctx.logger("mio.distillation");
-    const events = (rel.significantEvents || []).filter((e) => !e.consumed);
+    const sevenDaysAgo = Date.now() - 7 * 86400_000;
 
-    if (events.length === 0) return;
+    // 加载该用户近 7 天的 active semantic facts
+    const allFacts = await this.ctx.database.get("mio.semantic", {
+      groupId,
+      subject: rel.userId,
+    });
+    const recentFacts = allFacts.filter(
+      (f) =>
+        (f.supersededBy === null || f.supersededBy === undefined) &&
+        f.lastConfirmed >= sevenDaysAgo,
+    );
+
+    if (recentFacts.length === 0) return;
 
     const prompt = promptManager.get("recent_impression", {
       displayName: rel.displayName,
-      events: formatEvents(events),
+      recentFacts: formatFacts(recentFacts),
       coreImpression: rel.coreImpression || "（暂无）",
     });
 
@@ -461,21 +450,12 @@ export class DistillationPipeline {
 
     const recentImpression = (result.recent_impression || "").slice(0, 60);
 
-    // 标记 events 为已消费
-    const updatedEvents: SignificantEvent[] = (rel.significantEvents || []).map(
-      (e) => ({
-        ...e,
-        consumed: true,
-      }),
-    );
-
     await this.ctx.database.set(
       "mio.relational",
       { id: rel.id },
       {
         recentImpression,
         recentImpressionUpdatedAt: Date.now(),
-        significantEvents: updatedEvents,
       },
     );
 
@@ -488,25 +468,33 @@ export class DistillationPipeline {
 
   /**
    * Step 3: Core Impression 条件更新
+   * 输入源：该用户全部 active semantic facts（top 15 by confidence）
+   * 触发条件：activeFacts >= 3 && (isNewUser || coreImpressionAge > 30 天)
    */
-  private async updateCoreImpression(rel: MioRelationalRow): Promise<void> {
+  private async updateCoreImpression(groupId: string, rel: MioRelationalRow): Promise<void> {
     const logger = this.ctx.logger("mio.distillation");
-    const events = rel.significantEvents || [];
-    const unconsumedEvents = events.filter((e) => !e.consumed);
 
-    // 触发条件判断
-    const hasHighImportance = unconsumedEvents.some((e) => e.importance >= 0.8);
-    const hasManyConsistent =
-      unconsumedEvents.length >= 5 &&
-      this.isEmotionallyConsistent(unconsumedEvents);
+    // 加载该用户全部 active semantic facts
+    const allFacts = await this.ctx.database.get("mio.semantic", {
+      groupId,
+      subject: rel.userId,
+    });
+    const activeFacts = allFacts
+      .filter((f) => f.supersededBy === null || f.supersededBy === undefined)
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 15);
+
+    // 触发条件
     const isNewUser = !rel.coreImpression;
+    const coreImpressionAge = (Date.now() - rel.coreImpressionUpdatedAt) / 86400_000;
 
-    if (!hasHighImportance && !hasManyConsistent && !isNewUser) return;
+    if (activeFacts.length < 3) return;
+    if (!isNewUser && coreImpressionAge <= 30) return;
 
     const prompt = promptManager.get("core_impression", {
       displayName: rel.displayName,
       coreImpression: rel.coreImpression || "（暂无，这是新认识的人）",
-      events: formatEvents(events.slice(-10)),
+      facts: formatFacts(activeFacts),
     });
 
     const response = await this.llm.chat(
@@ -543,109 +531,45 @@ export class DistillationPipeline {
     );
   }
 
-  private isEmotionallyConsistent(events: SignificantEvent[]): boolean {
-    if (events.length < 2) return true;
-    const tones = events.map((e) => e.emotionalTone);
-    // 简单判断：如果超过 60% 的情感基调相同，认为一致
-    const counts = new Map<string, number>();
-    for (const tone of tones) {
-      counts.set(tone, (counts.get(tone) || 0) + 1);
-    }
-    const maxCount = Math.max(...counts.values());
-    return maxCount / tones.length >= 0.6;
-  }
-
   /**
-   * 清理：过期 events、archived episodic、容量驱逐
+   * 清理：简单时间过期 + 容量驱逐
    */
   private async cleanup(): Promise<void> {
     const logger = this.ctx.logger("mio.distillation");
     const now = Date.now();
-    const fourteenDaysAgo = now - 14 * 86400_000;
+    const twentyOneDaysAgo = now - 21 * 86400_000;
 
-    // 1. 清理 consumed + 超过 14 天的 significant_events
-    const allRel = await this.ctx.database.get("mio.relational", {});
-    for (const rel of allRel) {
-      const events = rel.significantEvents || [];
-      const filtered = events.filter(
-        (e) => !(e.consumed && e.timestamp < fourteenDaysAgo),
-      );
-      if (filtered.length < events.length) {
-        await this.ctx.database.set(
-          "mio.relational",
-          { id: rel.id },
-          {
-            significantEvents: filtered,
-          },
-        );
-      }
-    }
-
-    // 2. Episodic: retention < 0.1 → archived
-    // retention = importance * recency_factor * access_bonus
-    // 已蒸馏的条目打 0.6 折（信息已备份到 semantic）
+    // 1. 简单时间过期：eventTime < 21 天前 → archived
     const activeEpisodic = await this.ctx.database.get("mio.episodic", {
       archived: false,
     });
 
     let archivedCount = 0;
     for (const ep of activeEpisodic) {
-      const daysSince = (now - ep.eventTime) / 86400_000;
-      const recency = Math.pow(0.5, daysSince / 14); // 14 天半衰期
-      const accessBonus = Math.min(ep.accessCount * 0.05, 0.3);
-      let retention = ep.importance * recency + accessBonus;
-
-      // 已蒸馏的条目，信息已有备份，保留价值降低
-      if (ep.distilled) {
-        retention *= 0.6;
-      }
-
-      if (retention < 0.1) {
+      if (ep.eventTime < twentyOneDaysAgo) {
         await this.ctx.database.set(
           "mio.episodic",
           { id: ep.id },
-          {
-            archived: true,
-          },
+          { archived: true },
         );
         archivedCount++;
       }
     }
 
-    // 3. 容量驱逐：超过 activePoolLimit 时淘汰保留价值最低的
+    // 2. 容量驱逐：超过 activePoolLimit 时按时间排序淘汰最早的
     const remaining = activeEpisodic.length - archivedCount;
     if (remaining > this.config.activePoolLimit) {
       const toEvict = remaining - this.config.activePoolLimit;
-      // 按 retention 排序，淘汰最低的
-      const scored = activeEpisodic
-        .filter((ep) => {
-          const daysSince = (now - ep.eventTime) / 86400_000;
-          const recency = Math.pow(0.5, daysSince / 14);
-          const accessBonus = Math.min(ep.accessCount * 0.05, 0.3);
-          let retention = ep.importance * recency + accessBonus;
-          if (ep.distilled) retention *= 0.6;
-          return retention >= 0.1; // 只看还没被 archived 的
-        })
-        .map((ep) => {
-          const daysSince = (now - ep.eventTime) / 86400_000;
-          const recency = Math.pow(0.5, daysSince / 14);
-          const accessBonus = Math.min(ep.accessCount * 0.05, 0.3);
-          let retention = ep.importance * recency + accessBonus;
-          if (ep.distilled) retention *= 0.6;
-          return {
-            id: ep.id,
-            retention,
-          };
-        })
-        .sort((a, b) => a.retention - b.retention);
+      // 按 eventTime 排序，淘汰最早的
+      const sorted = activeEpisodic
+        .filter((ep) => ep.eventTime >= twentyOneDaysAgo) // 只看还没被 archived 的
+        .sort((a, b) => a.eventTime - b.eventTime);
 
-      for (let i = 0; i < Math.min(toEvict, scored.length); i++) {
+      for (let i = 0; i < Math.min(toEvict, sorted.length); i++) {
         await this.ctx.database.set(
           "mio.episodic",
-          { id: scored[i].id },
-          {
-            archived: true,
-          },
+          { id: sorted[i].id },
+          { archived: true },
         );
         archivedCount++;
       }

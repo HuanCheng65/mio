@@ -1,6 +1,6 @@
 import { LLMClient } from '../llm/client'
 import { ModelConfig } from '../llm/provider'
-import { ExtractionResult, ExtractionVibe, ExtractionNameObservation } from './types'
+import { ExtractionResult, ExtractionVibe, ExtractionNameObservation, ExtractionCulturalObservation, CulturalObservationType } from './types'
 import { NormalizedMessage } from '../perception/types'
 import { ContextRenderer } from '../perception/renderer'
 import { getPromptManager } from './prompt-manager'
@@ -57,7 +57,7 @@ async function extractChunk(
   logger?: ReturnType<Context['logger']>,
 ): Promise<ExtractionResult> {
   if (messages.length === 0) {
-    return { worthRemembering: false, episodes: [], relationalUpdates: [], sessionVibes: [], nameObservations: [] }
+    return { worthRemembering: false, episodes: [], relationalUpdates: [], sessionVibes: [], nameObservations: [], culturalObservations: [] }
   }
 
   // 建立 userId 集合和昵称到 userId 的映射（用于验证和 fallback）
@@ -98,14 +98,14 @@ async function extractChunk(
     )
   } catch (err) {
     logger?.warn('提取 LLM 调用失败:', err)
-    return { worthRemembering: false, episodes: [], relationalUpdates: [], sessionVibes: [], nameObservations: [] }
+    return { worthRemembering: false, episodes: [], relationalUpdates: [], sessionVibes: [], nameObservations: [], culturalObservations: [] }
   }
 
   try {
     const jsonMatch = response.content.match(/\{[\s\S]*\}/)
     if (!jsonMatch) {
       logger?.warn('提取 LLM 返回无 JSON:', response.content.slice(0, 200))
-      return { worthRemembering: false, episodes: [], relationalUpdates: [], sessionVibes: [], nameObservations: [] }
+      return { worthRemembering: false, episodes: [], relationalUpdates: [], sessionVibes: [], nameObservations: [], culturalObservations: [] }
     }
     const raw = JSON.parse(jsonMatch[0])
     logger?.debug(`提取 LLM 返回: ${(raw.memories || []).length} memories, ${(raw.relationship_observations || []).length} rel, ${(raw.vibes || []).length} vibes`)
@@ -178,11 +178,23 @@ async function extractChunk(
       })
       .filter((o: any) => o !== null)
 
+    // 解析 cultural_observations
+    const VALID_CULTURAL_TYPES = new Set<CulturalObservationType>(['expression', 'reaction_pattern', 'tool_knowledge', 'meme'])
+    const culturalObservations: ExtractionCulturalObservation[] = (raw.cultural_observations || [])
+      .map((obs: any) => {
+        if (!VALID_CULTURAL_TYPES.has(obs.type)) return null
+        const content = obs.content?.trim()
+        if (!content) return null
+        const confidence = Math.min(0.7, Math.max(0.1, obs.confidence ?? 0.3))
+        return { type: obs.type as CulturalObservationType, content, confidence }
+      })
+      .filter((o: any) => o !== null)
+
     const worthRemembering = episodes.length > 0 || relationalUpdates.length > 0
-    return { worthRemembering, episodes, relationalUpdates, sessionVibes, nameObservations }
+    return { worthRemembering, episodes, relationalUpdates, sessionVibes, nameObservations, culturalObservations }
   } catch (err) {
     logger?.warn('提取结果解析失败:', err, '| raw:', response.content.slice(0, 300))
-    return { worthRemembering: false, episodes: [], relationalUpdates: [], sessionVibes: [], nameObservations: [] }
+    return { worthRemembering: false, episodes: [], relationalUpdates: [], sessionVibes: [], nameObservations: [], culturalObservations: [] }
   }
 }
 
@@ -210,6 +222,7 @@ export async function extractMemories(
   const allRelUpdates: any[] = []
   const allVibes: any[] = []
   const allNameObs: any[] = []
+  const allCulturalObs: ExtractionCulturalObservation[] = []
 
   for (const chunk of chunks) {
     const result = await extractChunk(llm, modelConfig, chunk, botName, logger)
@@ -219,6 +232,9 @@ export async function extractMemories(
     }
     if (result.nameObservations.length > 0) {
       allNameObs.push(...result.nameObservations)
+    }
+    if (result.culturalObservations.length > 0) {
+      allCulturalObs.push(...result.culturalObservations)
     }
     if (result.worthRemembering) {
       allEpisodes.push(...result.episodes)
@@ -239,5 +255,6 @@ export async function extractMemories(
     relationalUpdates: allRelUpdates,
     sessionVibes: allVibes,
     nameObservations: allNameObs,
+    culturalObservations: allCulturalObs,
   }
 }

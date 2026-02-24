@@ -39,18 +39,13 @@ export class ContextAssembler {
   ): Promise<MemoryContext> {
     const logger = this.ctx.logger('mio.memory');
 
-    const [userProfile, episodicText, groupFactsText] = await Promise.all([
+    const [userProfile, episodicText, groupCulture] = await Promise.all([
       this.buildUserProfile(groupId, participantIds),
       Promise.resolve(this.buildMemoriesText(memories)),
-      this.buildGroupFacts(groupId),
+      this.buildGroupCulture(groupId),
     ]);
 
-    // group facts（inside_joke 等）追加到 episodic memories 末尾
-    const memoriesText = [episodicText, groupFactsText]
-      .filter(Boolean)
-      .join('\n');
-
-    return { userProfile, memories: memoriesText };
+    return { userProfile, memories: episodicText, groupCulture };
   }
 
   private async buildUserProfile(
@@ -196,10 +191,10 @@ export class ContextAssembler {
   }
 
   /**
-   * 加载群级别的 semantic facts（subject="group"，如 inside_joke）
-   * 这些是跨对话积累的群文化/梗，直接追加到 memories 末尾注入
+   * 加载所有 subject="group" 的 active facts，always-inject 群文化上下文
+   * confidence >= 0.4，按 confidence 降序，最多 15 条
    */
-  private async buildGroupFacts(groupId: string): Promise<string> {
+  private async buildGroupCulture(groupId: string): Promise<string> {
     const allFacts = await this.ctx.database.get('mio.semantic', {
       groupId,
       subject: 'group',
@@ -208,15 +203,14 @@ export class ContextAssembler {
     const activeFacts = allFacts.filter(
       (f) =>
         (f.supersededBy === null || f.supersededBy === undefined) &&
-        f.confidence >= 0.5,
+        f.confidence >= 0.4,
     );
 
     if (activeFacts.length === 0) return '';
 
-    // 按 confidence 降序，最多取 3 条（避免注入过多）
     const top = activeFacts
       .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, 3);
+      .slice(0, 15);
 
     return top.map((f) => `- ${f.content}`).join('\n');
   }

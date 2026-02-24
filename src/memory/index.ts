@@ -12,6 +12,8 @@ import { ProviderManager } from '../llm/provider'
 import { NormalizedMessage } from '../perception/types'
 import { ContextRenderer } from '../perception/renderer'
 import { updateKnownNames } from './name-learning'
+import { processCulturalObservations } from './culture-learning'
+import { processPersonObservations } from './person-learning'
 
 export { MemoryExtractionScheduler } from './extraction-scheduler'
 
@@ -21,9 +23,11 @@ export interface RecordSummary {
   episodes: number
   relational: number
   vibes: number
+  culturalObservations: number
   episodeSummaries: string[]
   relationalSummaries: string[]
   sessionVibes: string[]
+  culturalSummaries: string[]
 }
 
 export class MemoryService {
@@ -102,7 +106,7 @@ export class MemoryService {
       return await this.contextAssembler.assemble(groupId, participantIds, memories)
     } catch (err) {
       logger.warn('获取记忆上下文失败:', err)
-      return { userProfile: '', memories: '' }
+      return { userProfile: '', memories: '', groupCulture: '' }
     }
   }
 
@@ -144,6 +148,30 @@ export class MemoryService {
         }
       }
 
+      // 文化观察 → 直达 semantic 写入（不经过 working memory）
+      let culturalSummaries: string[] = []
+      if (result.culturalObservations.length > 0) {
+        try {
+          culturalSummaries = await processCulturalObservations(
+            this.ctx, params.groupId, result.culturalObservations, this.embeddingService,
+          )
+        } catch (err) {
+          logger.warn('文化观察处理失败:', err)
+        }
+      }
+
+      // 人物观察 → 直达 semantic + relational 写入（不经过 working memory）
+      let relationalSummaries: string[] = []
+      if (result.relationalUpdates.length > 0) {
+        try {
+          relationalSummaries = await processPersonObservations(
+            this.ctx, params.groupId, result.relationalUpdates, this.embeddingService,
+          )
+        } catch (err) {
+          logger.warn('人物观察处理失败:', err)
+        }
+      }
+
       await this.workingMemory.ingest(params.groupId, result)
 
       return {
@@ -151,17 +179,17 @@ export class MemoryService {
         episodes: result.episodes.length,
         relational: result.relationalUpdates.length,
         vibes: result.sessionVibes.length,
+        culturalObservations: result.culturalObservations.length,
         episodeSummaries: result.episodes.map(e =>
           `[imp=${e.importance.toFixed(1)} ${e.mioInvolvement}] ${e.summary}`
         ),
-        relationalSummaries: result.relationalUpdates.map(r =>
-          `${r.displayName}: ${r.event} (${r.emotionalTone})`
-        ),
+        relationalSummaries,
         sessionVibes: result.sessionVibes.map(v => `[ttl=${v.ttlHours}] ${v.userId}: ${v.vibe}`),
+        culturalSummaries,
       }
     } catch (err) {
       logger.warn('记忆提取失败:', err)
-      return { worthRemembering: false, episodes: 0, relational: 0, vibes: 0, episodeSummaries: [], relationalSummaries: [], sessionVibes: [] }
+      return { worthRemembering: false, episodes: 0, relational: 0, vibes: 0, culturalObservations: 0, episodeSummaries: [], relationalSummaries: [], sessionVibes: [], culturalSummaries: [] }
     }
   }
 

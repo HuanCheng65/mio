@@ -13,8 +13,6 @@ export interface EpisodicMemory {
   emotionalValence: number       // -1.0~1.0
   emotionalIntensity: number     // 0~1.0
   mioInvolvement: 'active' | 'observer' | 'mentioned'
-  accessCount: number
-  lastAccessed: number
   eventTime: number
   archived: boolean
   createdAt: number
@@ -23,15 +21,6 @@ export interface EpisodicMemory {
 // ===== Relational Memory =====
 
 export type ClosenessTier = 'close' | 'familiar' | 'acquaintance' | 'stranger'
-
-export interface SignificantEvent {
-  timestamp: number
-  description: string
-  emotionalTone: string
-  importance: number
-  sourceEpisodeId: string
-  consumed: boolean
-}
 
 export interface RelationalMemory {
   groupId: string
@@ -43,9 +32,7 @@ export interface RelationalMemory {
   recentImpressionUpdatedAt: number
   closenessTier: ClosenessTier
   interactionCount: number
-  recentInteractionCount: number
   lastInteraction: number
-  significantEvents: SignificantEvent[]
   knownNames: NameObservation[]
   preferredName: string | null
   createdAt: number
@@ -62,13 +49,23 @@ export interface NameObservation {
   lastSeen: number
 }
 
+// ===== Cultural Observation =====
+
+export type CulturalObservationType = 'expression' | 'reaction_pattern' | 'tool_knowledge' | 'meme'
+
+export interface ExtractionCulturalObservation {
+  type: CulturalObservationType
+  content: string
+  confidence: number
+}
+
 // ===== Semantic Fact (Phase 3b) =====
 
 export interface SemanticFact {
   id: string
   groupId: string
   subject: string  // userId 或 "group"（用于 inside_joke）
-  factType: 'preference' | 'trait' | 'experience' | 'opinion' | 'status' | 'inside_joke'
+  factType: 'preference' | 'trait' | 'experience' | 'opinion' | 'status' | 'inside_joke' | 'group_expression' | 'reaction_pattern' | 'tool_knowledge'
   content: string
   confidence: number
   sourceEpisodes: string[]
@@ -141,6 +138,7 @@ export interface ExtractionResult {
   relationalUpdates: ExtractionRelUpdate[]
   sessionVibes: ExtractionVibe[]
   nameObservations: ExtractionNameObservation[]
+  culturalObservations: ExtractionCulturalObservation[]
 }
 
 // ===== Memory Context (给 PromptBuilder) =====
@@ -148,6 +146,7 @@ export interface ExtractionResult {
 export interface MemoryContext {
   userProfile: string            // 参与者印象文本
   memories: string               // 召回的记忆文本
+  groupCulture: string           // 群文化 always-inject 文本
 }
 
 // ===== Memory Config =====

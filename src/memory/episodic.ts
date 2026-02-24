@@ -4,6 +4,7 @@ import { WorkingMemory } from './working-memory'
 
 export interface RetrievedMemory {
   summary: string
+  tags: string[]
   eventTime: number
   importance: number
   mioInvolvement: string
@@ -18,7 +19,7 @@ export class EpisodicRetriever {
   ) {}
 
   /**
-   * 混合检索：embedding 相似度 + 时间衰减 + importance
+   * 混合检索：embedding 相似度 + 时间衰减 + importance + tag 匹配
    * 返回 top-5 最相关的记忆
    * chatHistoryStart: 聊天记录最早消息的时间戳，该时间之后的记忆不注入（已在聊天记录中）
    */
@@ -50,6 +51,7 @@ export class EpisodicRetriever {
     const pending = this.workingMemory.getPendingEpisodic(groupId)
 
     const now = Date.now()
+    const queryLower = recentText.toLowerCase()
     const candidates: RetrievedMemory[] = []
 
     // 评分 DB 记忆
@@ -63,10 +65,12 @@ export class EpisodicRetriever {
       const similarity = cosineSimilarity(queryEmbedding, embedding)
       const daysSince = (now - row.eventTime) / 86400_000
       const timeDecay = Math.pow(0.5, daysSince / 7) // 7 天半衰期
-      const score = similarity * 0.6 + timeDecay * 0.3 + row.importance * 0.1
+      const tagBoost = (row.tags || []).some(tag => queryLower.includes(tag.toLowerCase())) ? 0.15 : 0
+      const score = similarity * 0.5 + timeDecay * 0.2 + row.importance * 0.1 + tagBoost * 0.2
 
       candidates.push({
         summary: row.summary,
+        tags: row.tags || [],
         eventTime: row.eventTime,
         importance: row.importance,
         mioInvolvement: row.mioInvolvement,
@@ -84,10 +88,12 @@ export class EpisodicRetriever {
       const similarity = cosineSimilarity(queryEmbedding, ep.embedding)
       const daysSince = (now - ep.eventTime) / 86400_000
       const timeDecay = Math.pow(0.5, daysSince / 7)
-      const score = similarity * 0.6 + timeDecay * 0.3 + ep.importance * 0.1
+      const tagBoost = (ep.tags || []).some(tag => queryLower.includes(tag.toLowerCase())) ? 0.15 : 0
+      const score = similarity * 0.5 + timeDecay * 0.2 + ep.importance * 0.1 + tagBoost * 0.2
 
       candidates.push({
         summary: ep.summary,
+        tags: ep.tags || [],
         eventTime: ep.eventTime,
         importance: ep.importance,
         mioInvolvement: ep.mioInvolvement,
@@ -99,27 +105,7 @@ export class EpisodicRetriever {
     candidates.sort((a, b) => b.score - a.score)
     const results = candidates.slice(0, topK)
 
-    // 异步更新 accessCount（fire-and-forget）
-    this.updateAccessCounts(groupId, results).catch(() => {})
-
     logger.debug(`检索到 ${results.length} 条相关记忆 (候选 ${candidates.length})`)
     return results
-  }
-
-  private async updateAccessCounts(groupId: string, memories: RetrievedMemory[]) {
-    for (const mem of memories) {
-      // 通过 summary + eventTime 匹配（不完美但够用）
-      const rows = await this.ctx.database.get('mio.episodic', {
-        groupId,
-        summary: mem.summary,
-        eventTime: mem.eventTime,
-      })
-      if (rows.length > 0) {
-        await this.ctx.database.set('mio.episodic', { id: rows[0].id }, {
-          accessCount: rows[0].accessCount + 1,
-          lastAccessed: Date.now(),
-        })
-      }
-    }
   }
 }
