@@ -1,4 +1,5 @@
 import { h, Session } from "koishi";
+import { Jimp } from "jimp";
 import { LLMClient, ChatMessage } from "../llm/client";
 import { ModelConfig } from "../llm/provider";
 import { getPromptManager } from "../memory/prompt-manager";
@@ -174,6 +175,31 @@ export class ImageProcessor {
   }
 
   /**
+   * 压缩图片用于 VLM 分析，降低 token 消耗
+   * 按总像素数限制缩放，保证长图/宽图短边不会被压得太小
+   */
+  private async compressImage(
+    buffer: Buffer,
+    maxPixels: number = 768 * 768,
+  ): Promise<string> {
+    const image = await Jimp.read(buffer);
+    const { width, height } = image;
+
+    const currentPixels = width * height;
+    if (currentPixels > maxPixels) {
+      const scale = Math.sqrt(maxPixels / currentPixels);
+      image.resize({
+        w: Math.round(width * scale),
+        h: Math.round(height * scale),
+      });
+    }
+
+    const jpegBuffer = await image.getBuffer("image/jpeg", { quality: 80 });
+    const base64 = jpegBuffer.toString("base64");
+    return `data:image/jpeg;base64,${base64}`;
+  }
+
+  /**
    * 从 session 中提取所有图片元素
    */
   extractImages(session: Session): ImageElement[] {
@@ -233,12 +259,17 @@ export class ImageProcessor {
     const prompt = promptManager.getRaw('image_understanding')
 
     try {
+      // 下载图片，GIF 保留原始格式（VLM 原生支持动图），其他格式压缩
+      const buffer = await this.downloadImage(imageUrl)
+      const isGif = buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 // "GIF" magic bytes
+      const resolvedUrl = isGif ? imageUrl : await this.compressImage(buffer)
+
       const messages: ChatMessage[] = [
         {
           role: 'user',
           content: JSON.stringify([
             { type: 'text', text: prompt },
-            { type: 'image_url', image_url: { url: imageUrl } },
+            { type: 'image_url', image_url: { url: resolvedUrl } },
           ]),
         },
       ]
