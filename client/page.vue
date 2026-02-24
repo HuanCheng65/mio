@@ -32,6 +32,10 @@
                 <div class="stat-number">{{ todayTokens }}</div>
                 <div class="stat-label">今日 Tokens</div>
               </div>
+              <div class="stat-box orange">
+                <div class="stat-number">{{ formatNumber(tokenStats.totalCachedTokens) }}</div>
+                <div class="stat-label">缓存命中</div>
+              </div>
             </div>
             <div style="margin-top: 12px">
               <el-button size="small" @click="loadTokenStats">刷新</el-button>
@@ -51,6 +55,7 @@
               <tr>
                 <th style="text-align: left">模型</th>
                 <th>Prompt</th>
+                <th>Cached</th>
                 <th>Completion</th>
                 <th>调用</th>
               </tr>
@@ -59,6 +64,7 @@
               <tr v-for="(usage, model) in tokenStats.byModel" :key="model">
                 <td style="text-align: left; word-break: break-all">{{ model }}</td>
                 <td>{{ formatNumber(usage.promptTokens) }}</td>
+                <td style="color: #e6a23c">{{ formatNumber(usage.cachedTokens) }}</td>
                 <td>{{ formatNumber(usage.completionTokens) }}</td>
                 <td>{{ usage.calls }}</td>
               </tr>
@@ -290,6 +296,7 @@ onMounted(() => {
 .stat-box.blue { background: #f0f7ff; }
 .stat-box.green { background: #f0f9eb; }
 .stat-box.purple { background: #f3f0ff; }
+.stat-box.orange { background: #fff8e6; }
 
 .stat-number {
   font-size: 22px;
@@ -299,6 +306,7 @@ onMounted(() => {
 .stat-box.blue .stat-number { color: #409eff; }
 .stat-box.green .stat-number { color: #67c23a; }
 .stat-box.purple .stat-number { color: #7c5cfc; }
+.stat-box.orange .stat-number { color: #e6a23c; }
 
 .stat-label {
   font-size: 12px;

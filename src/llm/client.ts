@@ -10,7 +10,7 @@ export interface ChatMessage {
 
 export interface LLMResponse {
   content: string;
-  usage: { promptTokens: number; completionTokens: number };
+  usage: { promptTokens: number; completionTokens: number; cachedTokens: number };
 }
 
 export interface ChatOptions {
@@ -66,6 +66,7 @@ export class LLMClient {
       modelConfig.modelName,
       result.usage.promptTokens,
       result.usage.completionTokens,
+      result.usage.cachedTokens,
     );
 
     return result;
@@ -124,6 +125,7 @@ export class LLMClient {
       usage: {
         promptTokens: response.usage?.prompt_tokens || 0,
         completionTokens: response.usage?.completion_tokens || 0,
+        cachedTokens: response.usage?.prompt_tokens_details?.cached_tokens || 0,
       },
     };
   }
@@ -205,6 +207,7 @@ export class LLMClient {
       usage: {
         promptTokens: response.usageMetadata?.promptTokenCount || 0,
         completionTokens: response.usageMetadata?.candidatesTokenCount || 0,
+        cachedTokens: response.usageMetadata?.cachedContentTokenCount ?? 0,
       },
     };
   }
