@@ -1,4 +1,4 @@
-import { Context } from 'koishi'
+import type { Context } from 'koishi'
 import { NameObservation } from './types'
 
 /**
@@ -30,15 +30,48 @@ export async function updateKnownNames(
   userId: string,
   name: string,
   source: 'others_call' | 'self_intro',
+  displayName?: string,
 ): Promise<void> {
+  const now = Date.now()
   const rows = await ctx.database.get('mio.relational', { groupId, userId })
-  if (rows.length === 0) return
+
+  if (rows.length === 0) {
+    const preferredName = resolvePreferredName([{
+      name,
+      source,
+      count: 1,
+      firstSeen: now,
+      lastSeen: now,
+    }])
+
+    await ctx.database.create('mio.relational', {
+      groupId,
+      userId,
+      displayName: displayName || userId,
+      coreImpression: '',
+      coreImpressionUpdatedAt: now,
+      recentImpression: '',
+      recentImpressionUpdatedAt: now,
+      closenessTier: 'stranger',
+      interactionCount: 0,
+      lastInteraction: now,
+      knownNames: JSON.stringify([{
+        name,
+        source,
+        count: 1,
+        firstSeen: now,
+        lastSeen: now,
+      }]),
+      preferredName,
+      createdAt: now,
+      updatedAt: now,
+    })
+    return
+  }
 
   const rel = rows[0]
   const names: NameObservation[] = JSON.parse(rel.knownNames || '[]')
-
   const existing = names.find(n => n.name === name)
-  const now = Date.now()
 
   if (existing) {
     existing.count++
@@ -56,7 +89,9 @@ export async function updateKnownNames(
 
   const preferred = resolvePreferredName(names)
   await ctx.database.set('mio.relational', { id: rel.id }, {
+    displayName: rel.displayName || displayName || userId,
     knownNames: JSON.stringify(names),
     preferredName: preferred,
+    updatedAt: now,
   })
 }

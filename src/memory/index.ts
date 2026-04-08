@@ -141,7 +141,15 @@ export class MemoryService {
       // 称呼观察 → 直接写入 relational 表（不经过 working memory）
       for (const obs of result.nameObservations) {
         try {
-          await updateKnownNames(this.ctx, params.groupId, obs.userId, obs.name, obs.source)
+          const displayName = params.recentMessages.find(m => m.senderId === obs.userId)?.sender
+          await updateKnownNames(
+            this.ctx,
+            params.groupId,
+            obs.userId,
+            obs.name,
+            obs.source,
+            displayName,
+          )
           logger.debug(`称呼观察: ${obs.userId} → ${obs.name} (${obs.source})`)
         } catch (err) {
           logger.warn(`更新称呼失败: ${obs.userId}`, err)
