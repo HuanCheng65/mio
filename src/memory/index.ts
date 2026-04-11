@@ -198,7 +198,7 @@ export class MemoryService {
    */
   async dispose() {
     this.stopDistillationScheduler()
-    this.workingMemory.dispose()
+    await this.workingMemory.dispose()
   }
 
   /**

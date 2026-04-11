@@ -177,12 +177,11 @@ export class WorkingMemory {
     this.flushTimer = setTimeout(() => this.flush(), this.config.flushIntervalMs)
   }
 
-  dispose() {
+  async dispose() {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer)
       this.flushTimer = null
     }
-    // 同步 flush 不可能，但尝试一下
-    this.flush().catch(() => {})
+    await this.flush()
   }
 }
