@@ -8,6 +8,12 @@ export interface ModelUsage {
   calls: number
 }
 
+export type PurposeUsageMap = Record<string, ModelUsage>
+
+interface BufferedUsage extends ModelUsage {
+  purposeStats: PurposeUsageMap
+}
+
 export interface TokenStats {
   totalPromptTokens: number
   totalCompletionTokens: number
@@ -15,31 +21,88 @@ export interface TokenStats {
   totalCalls: number
   byModel: Record<string, ModelUsage>
   byDate: Record<string, { promptTokens: number; completionTokens: number; cachedTokens: number; calls: number }>
+  byPurpose: PurposeUsageMap
 }
 
 function today(): string {
   return new Date().toISOString().slice(0, 10)
 }
 
+function createUsage(): ModelUsage {
+  return { promptTokens: 0, completionTokens: 0, cachedTokens: 0, calls: 0 }
+}
+
+function addUsage(target: ModelUsage, promptTokens: number, completionTokens: number, cachedTokens: number, calls: number = 1) {
+  target.promptTokens += promptTokens
+  target.completionTokens += completionTokens
+  target.cachedTokens += cachedTokens
+  target.calls += calls
+}
+
+function ensureUsage(map: Record<string, ModelUsage>, key: string): ModelUsage {
+  if (!map[key]) {
+    map[key] = createUsage()
+  }
+  return map[key]
+}
+
+function mergePurposeStats(
+  base: PurposeUsageMap | undefined,
+  delta: PurposeUsageMap | undefined,
+): PurposeUsageMap {
+  const merged: PurposeUsageMap = {}
+
+  for (const [purpose, usage] of Object.entries(base || {})) {
+    addUsage(ensureUsage(merged, purpose), usage.promptTokens, usage.completionTokens, usage.cachedTokens, usage.calls)
+  }
+  for (const [purpose, usage] of Object.entries(delta || {})) {
+    addUsage(ensureUsage(merged, purpose), usage.promptTokens, usage.completionTokens, usage.cachedTokens, usage.calls)
+  }
+
+  return merged
+}
+
+function normalizePurposeStats(row: MioTokenUsageRow): PurposeUsageMap {
+  const purposeStats = mergePurposeStats(row.purposeStats, undefined)
+  if (Object.keys(purposeStats).length > 0) {
+    return purposeStats
+  }
+  return {
+    unknown: {
+      promptTokens: row.promptTokens,
+      completionTokens: row.completionTokens,
+      cachedTokens: row.cachedTokens,
+      calls: row.calls,
+    },
+  }
+}
+
 export class TokenTracker {
   private ctx: Context | null = null
   // buffer key: "date:model"
-  private buffer = new Map<string, ModelUsage>()
+  private buffer = new Map<string, BufferedUsage>()
 
   init(ctx: Context) {
     this.ctx = ctx
   }
 
-  record(model: string, promptTokens: number, completionTokens: number, cachedTokens: number) {
+  record(model: string, promptTokens: number, completionTokens: number, cachedTokens: number, purpose: string = 'chat') {
     const key = `${today()}:${model}`
     const existing = this.buffer.get(key)
     if (existing) {
-      existing.promptTokens += promptTokens
-      existing.completionTokens += completionTokens
-      existing.cachedTokens += cachedTokens
-      existing.calls++
+      addUsage(existing, promptTokens, completionTokens, cachedTokens)
+      addUsage(ensureUsage(existing.purposeStats, purpose), promptTokens, completionTokens, cachedTokens)
     } else {
-      this.buffer.set(key, { promptTokens, completionTokens, cachedTokens, calls: 1 })
+      const usage: BufferedUsage = {
+        promptTokens: 0,
+        completionTokens: 0,
+        cachedTokens: 0,
+        calls: 0,
+        purposeStats: {},
+      }
+      addUsage(usage, promptTokens, completionTokens, cachedTokens)
+      addUsage(ensureUsage(usage.purposeStats, purpose), promptTokens, completionTokens, cachedTokens)
+      this.buffer.set(key, usage)
     }
   }
 
@@ -56,6 +119,7 @@ export class TokenTracker {
           completionTokens: rows[0].completionTokens + usage.completionTokens,
           cachedTokens: rows[0].cachedTokens + usage.cachedTokens,
           calls: rows[0].calls + usage.calls,
+          purposeStats: mergePurposeStats(rows[0].purposeStats, usage.purposeStats),
         })
       } else {
         await this.ctx.database.create('mio.token_usage', {
@@ -65,6 +129,7 @@ export class TokenTracker {
           completionTokens: usage.completionTokens,
           cachedTokens: usage.cachedTokens,
           calls: usage.calls,
+          purposeStats: usage.purposeStats,
         } as MioTokenUsageRow)
       }
     }
@@ -76,7 +141,15 @@ export class TokenTracker {
     await this.flush()
 
     if (!this.ctx) {
-      return { totalPromptTokens: 0, totalCompletionTokens: 0, totalCachedTokens: 0, totalCalls: 0, byModel: {}, byDate: {} }
+      return {
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+        totalCachedTokens: 0,
+        totalCalls: 0,
+        byModel: {},
+        byDate: {},
+        byPurpose: {},
+      }
     }
 
     const rows = await this.ctx.database.get('mio.token_usage', {})
@@ -87,6 +160,7 @@ export class TokenTracker {
     let totalCalls = 0
     const byModel: Record<string, ModelUsage> = {}
     const byDate: Record<string, { promptTokens: number; completionTokens: number; cachedTokens: number; calls: number }> = {}
+    const byPurpose: PurposeUsageMap = {}
 
     for (const row of rows) {
       totalPromptTokens += row.promptTokens
@@ -95,37 +169,19 @@ export class TokenTracker {
       totalCalls += row.calls
 
       // aggregate by model
-      if (byModel[row.model]) {
-        byModel[row.model].promptTokens += row.promptTokens
-        byModel[row.model].completionTokens += row.completionTokens
-        byModel[row.model].cachedTokens += row.cachedTokens
-        byModel[row.model].calls += row.calls
-      } else {
-        byModel[row.model] = {
-          promptTokens: row.promptTokens,
-          completionTokens: row.completionTokens,
-          cachedTokens: row.cachedTokens,
-          calls: row.calls,
-        }
-      }
+      addUsage(ensureUsage(byModel, row.model), row.promptTokens, row.completionTokens, row.cachedTokens, row.calls)
 
       // aggregate by date
-      if (byDate[row.date]) {
-        byDate[row.date].promptTokens += row.promptTokens
-        byDate[row.date].completionTokens += row.completionTokens
-        byDate[row.date].cachedTokens += row.cachedTokens
-        byDate[row.date].calls += row.calls
-      } else {
-        byDate[row.date] = {
-          promptTokens: row.promptTokens,
-          completionTokens: row.completionTokens,
-          cachedTokens: row.cachedTokens,
-          calls: row.calls,
-        }
+      addUsage(ensureUsage(byDate, row.date), row.promptTokens, row.completionTokens, row.cachedTokens, row.calls)
+
+      // aggregate by purpose
+      const purposeStats = normalizePurposeStats(row)
+      for (const [purpose, usage] of Object.entries(purposeStats)) {
+        addUsage(ensureUsage(byPurpose, purpose), usage.promptTokens, usage.completionTokens, usage.cachedTokens, usage.calls)
       }
     }
 
-    return { totalPromptTokens, totalCompletionTokens, totalCachedTokens, totalCalls, byModel, byDate }
+    return { totalPromptTokens, totalCompletionTokens, totalCachedTokens, totalCalls, byModel, byDate, byPurpose }
   }
 
   async reset() {
@@ -151,6 +207,7 @@ export function extendTokenTable(ctx: Context) {
     completionTokens: { type: 'unsigned', initial: 0 },
     cachedTokens: { type: 'unsigned', initial: 0 },
     calls: { type: 'unsigned', initial: 0 },
+    purposeStats: { type: 'json', initial: {} },
   }, {
     autoInc: true,
     primary: 'id',

@@ -277,6 +277,7 @@ export class ImageProcessor {
       const response = await this.llm.chat(messages, this.modelConfig, {
         maxTokens: this.modelConfig.maxTokens || 500,
         responseFormat: 'json_object',
+        purpose: 'image-understanding',
       })
 
       const jsonMatch = response.content.match(/\{[\s\S]*\}/)

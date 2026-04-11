@@ -42,6 +42,7 @@ export class EmbeddingService {
       response.usage?.prompt_tokens || 0,
       0,
       0,
+      'embedding',
     )
 
     // 按 index 排序确保顺序一致

@@ -94,7 +94,7 @@ async function extractChunk(
         { role: 'user', content: formatted },
       ],
       modelConfig,
-      { temperature: 0.3, maxTokens: 800, responseFormat: 'json_object' },
+      { temperature: 0.3, maxTokens: 800, responseFormat: 'json_object', purpose: 'memory-extraction' },
     )
   } catch (err) {
     logger?.warn('提取 LLM 调用失败:', err)

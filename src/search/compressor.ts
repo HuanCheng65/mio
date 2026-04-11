@@ -48,7 +48,8 @@ export class SearchCompressor {
 
       const response = await this.llmClient.chat(messages, this.config, {
         temperature: this.config.temperature,
-        maxTokens: this.config.maxTokens
+        maxTokens: this.config.maxTokens,
+        purpose: "search-compression",
       });
 
       const compressed = response.content.trim();

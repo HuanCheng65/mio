@@ -73,6 +73,30 @@
         </k-card>
 
         <k-card class="card">
+          <h2>按用途</h2>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th style="text-align: left">用途</th>
+                <th>Prompt</th>
+                <th>Cached</th>
+                <th>Completion</th>
+                <th>调用</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(usage, purpose) in sortedByPurpose" :key="purpose">
+                <td style="text-align: left; word-break: break-all">{{ purpose }}</td>
+                <td>{{ formatNumber(usage.promptTokens) }}</td>
+                <td style="color: #e6a23c">{{ formatNumber(usage.cachedTokens) }}</td>
+                <td>{{ formatNumber(usage.completionTokens) }}</td>
+                <td>{{ usage.calls }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </k-card>
+
+        <k-card class="card">
           <h2>按日期</h2>
           <table class="data-table">
             <thead>
@@ -173,6 +197,17 @@ const sortedByDate = computed(() => {
   if (!tokenStats.value?.byDate) return {};
   const entries = Object.entries(tokenStats.value.byDate);
   entries.sort((a, b) => b[0].localeCompare(a[0]));
+  return Object.fromEntries(entries);
+});
+
+const sortedByPurpose = computed(() => {
+  if (!tokenStats.value?.byPurpose) return {};
+  const entries = Object.entries(tokenStats.value.byPurpose);
+  entries.sort((a, b) => {
+    const tokensA = a[1].promptTokens + a[1].completionTokens;
+    const tokensB = b[1].promptTokens + b[1].completionTokens;
+    return tokensB - tokensA;
+  });
   return Object.fromEntries(entries);
 });
 

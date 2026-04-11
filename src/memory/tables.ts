@@ -88,6 +88,12 @@ export interface MioTokenUsageRow {
   completionTokens: number
   cachedTokens: number
   calls: number
+  purposeStats?: Record<string, {
+    promptTokens: number
+    completionTokens: number
+    cachedTokens: number
+    calls: number
+  }>
 }
 
 export function extendTables(ctx: Context) {

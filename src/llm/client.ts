@@ -18,6 +18,7 @@ export interface ChatOptions {
   maxTokens?: number;
   signal?: AbortSignal; // 支持取消请求
   responseFormat?: "text" | "json_object"; // JSON mode 支持
+  purpose?: string; // Token 用量用途标签
 }
 
 export class LLMClient {
@@ -43,6 +44,7 @@ export class LLMClient {
     const maxTokens = options?.maxTokens ?? modelConfig.maxTokens ?? 150;
     const signal = options?.signal;
     const responseFormat = options?.responseFormat ?? "text";
+    const purpose = options?.purpose ?? "chat";
 
     const result = providerConfig.type === "gemini"
       ? await this.chatGemini(
@@ -67,6 +69,7 @@ export class LLMClient {
       result.usage.promptTokens,
       result.usage.completionTokens,
       result.usage.cachedTokens,
+      purpose,
     );
 
     return result;

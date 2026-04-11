@@ -233,7 +233,7 @@ export class DistillationPipeline {
         { role: "user", content: "请分析以上记忆并更新认知。" },
       ],
       this.config.distillation,
-      { temperature: 0.5, maxTokens: 8192, responseFormat: "json_object" },
+      { temperature: 0.5, maxTokens: 8192, responseFormat: "json_object", purpose: "memory-distillation-semantic" },
     );
 
     const raw = parseJSON(response.content);
@@ -439,7 +439,7 @@ export class DistillationPipeline {
         { role: "user", content: "请生成近期印象补充。" },
       ],
       this.config.distillation,
-      { temperature: 0.3, maxTokens: 200, responseFormat: "json_object" },
+      { temperature: 0.3, maxTokens: 200, responseFormat: "json_object", purpose: "memory-distillation-recent-impression" },
     );
 
     const result = parseJSON(response.content);
@@ -503,7 +503,7 @@ export class DistillationPipeline {
         { role: "user", content: "请判断是否需要更新核心印象。" },
       ],
       this.config.distillation,
-      { temperature: 0.3, maxTokens: 200, responseFormat: "json_object" },
+      { temperature: 0.3, maxTokens: 200, responseFormat: "json_object", purpose: "memory-distillation-core-impression" },
     );
 
     const result = parseJSON(response.content);
