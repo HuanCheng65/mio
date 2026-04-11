@@ -45,8 +45,7 @@ export class ContextRenderer {
    * 将消息列表渲染为 LLM 可读文本，含历史/新消息分区、recalled 过滤、reaction 追加。
    */
   render(messages: NormalizedMessage[], newMessageIds: Set<string>): { text: string; msgMap: Map<string, NormalizedMessage> } {
-    const history: string[] = [];
-    const fresh: string[] = [];
+    const lines: string[] = [];
     const msgMap = new Map<string, NormalizedMessage>();
     let counter = 0;
 
@@ -65,22 +64,12 @@ export class ContextRenderer {
       line = `[${shortId}] ${line}`;
 
       if (newMessageIds.has(msg.id)) {
-        fresh.push(line);
-      } else {
-        history.push(line);
+        line = `[新消息] ${line}`;
       }
+      lines.push(line);
     }
 
-    const parts: string[] = [];
-    if (history.length > 0) {
-      parts.push(history.join('\n'));
-    }
-    if (fresh.length > 0) {
-      parts.push('---\n【下面是刚刚发生的新消息】\n');
-      parts.push(fresh.join('\n'));
-    }
-
-    return { text: parts.join('\n'), msgMap };
+    return { text: lines.join('\n'), msgMap };
   }
 
   private renderReactions(msg: NormalizedMessage): string {
@@ -129,9 +118,6 @@ export class ContextRenderer {
         return `[${seg.summary}]`;
 
       case 'recall':
-        if (seg.originalPreview) {
-          return `[${seg.recalledBy} 撤回了一条消息（你看到了，说的是「${seg.originalPreview}」）]`;
-        }
         return `[${seg.recalledBy} 撤回了一条消息]`;
 
       case 'poke':

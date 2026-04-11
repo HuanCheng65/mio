@@ -1,9 +1,13 @@
 export interface LLMResponse {
   thought: string;
-  silent: boolean;
+  urge: number;       // 0-10, how much the bot wants to speak
+  silent: boolean;    // derived in code: urge < SILENCE_THRESHOLD
   search: SearchRequest | null;
   actions: Action[];
 }
+
+/** urge values below this threshold are treated as silent */
+export const SILENCE_THRESHOLD = 7;
 
 export interface SearchRequest {
   query?: string;

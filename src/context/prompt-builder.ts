@@ -1,6 +1,7 @@
 import { Lunar } from "lunar-javascript";
 import { getPromptManager } from "../memory/prompt-manager";
 import { getPersonaLayer } from "./layer2-persona";
+import { ALLOWED_REACT_EMOJI_TEXT } from "../emoji/react-policy";
 
 const promptManager = getPromptManager();
 
@@ -34,7 +35,7 @@ export class PromptBuilder {
   }
 
   getPersonaPreview(): string {
-    return this.layer3Persona.split('\n')[0];
+    return this.layer3Persona.split("\n")[0];
   }
 
   /**
@@ -55,15 +56,15 @@ export class PromptBuilder {
 
     // Layer 2: 输出格式说明（从 user prompt 移到这里，减少重复）
     parts.push("\n---\n");
-    parts.push(promptManager.getRaw("chat_system_layer2_format"));
+    parts.push(
+      promptManager.get("chat_system_layer2_format", {
+        allowedReactEmojis: ALLOWED_REACT_EMOJI_TEXT,
+      }),
+    );
 
     // Layer 3: 人设（很少变化）
     parts.push("\n---\n");
     parts.push(this.layer3Persona);
-
-    // Layer 4: Few-Shot 示范（很少变化）
-    parts.push("\n---\n");
-    parts.push(promptManager.getRaw("chat_system_layer4_fewshot"));
 
     // ===== 动态部分（变化频率：偶尔到频繁）=====
 
@@ -102,7 +103,7 @@ export class PromptBuilder {
     }
 
     if (options.stickerSummary) {
-      parts.push('\n');
+      parts.push("\n");
       parts.push(options.stickerSummary);
     }
 
@@ -129,9 +130,10 @@ export class PromptBuilder {
    * 构建 User Prompt（简化版，格式说明已移到 system）
    */
   buildUserPrompt(newMessageMarker: string, recentBotCount: number): string {
-    const activity = recentBotCount > 0
-      ? `（你最近 5 分钟内说了 ${recentBotCount} 条消息。）\n`
-      : '';
+    const activity =
+      recentBotCount > 0
+        ? `（你最近 5 分钟内说了 ${recentBotCount} 条消息。）\n`
+        : "";
     return promptManager.get("chat_user_simple", {
       newMessages: newMessageMarker,
       recentBotActivity: activity,

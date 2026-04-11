@@ -1,7 +1,7 @@
 import { Session } from "koishi";
 import { ImageProcessor } from "../pipeline/image-processor";
 import { MessageBuffer } from "../pipeline/message-buffer";
-import { getEmojiById } from '@wittf/koishi-plugin-adapter-onebot';
+import { getEmojiById } from "../emoji/lookup";
 import {
   NormalizedMessage,
   MessageSegment,
