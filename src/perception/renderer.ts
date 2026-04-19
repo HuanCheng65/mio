@@ -44,12 +44,20 @@ export class ContextRenderer {
   /**
    * 将消息列表渲染为 LLM 可读文本，含历史/新消息分区、recalled 过滤、reaction 追加。
    */
-  render(messages: NormalizedMessage[], newMessageIds: Set<string>): { text: string; msgMap: Map<string, NormalizedMessage> } {
+  render(
+    messages: NormalizedMessage[],
+    newMessageIds: Set<string>,
+    excludedMessageIds: Set<string> = new Set(),
+  ): { text: string; msgMap: Map<string, NormalizedMessage> } {
     const lines: string[] = [];
     const msgMap = new Map<string, NormalizedMessage>();
     let counter = 0;
 
     for (const msg of messages) {
+      if (excludedMessageIds.has(msg.id)) {
+        continue;
+      }
+
       // 跳过已撤回的原始消息（保留撤回通知本身）
       if (msg.recalled && !msg.segments.some(s => s.type === 'recall')) {
         continue;

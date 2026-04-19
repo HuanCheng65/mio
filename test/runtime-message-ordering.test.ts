@@ -54,3 +54,30 @@ test("renderer keeps chronological order and marks new messages inline", () => {
   assert.ok(idxUser < idxBot, "older user message should appear before newer bot message");
   assert.match(text, /\[新消息\].*older user message/);
 });
+
+test("renderer can omit selected messages from history rendering", () => {
+  const renderer = new ContextRenderer();
+  const messages: NormalizedMessage[] = [
+    createMessage({
+      id: "old",
+      sender: "Alice",
+      senderId: "10001",
+      timestamp: 1000,
+      rawContent: "older user message",
+      segments: [{ type: "text", content: "older user message" }],
+    }),
+    createMessage({
+      id: "new",
+      sender: "Bob",
+      senderId: "10002",
+      timestamp: 2000,
+      rawContent: "new message body",
+      segments: [{ type: "text", content: "new message body" }],
+    }),
+  ];
+
+  const { text } = renderer.render(messages, new Set(), new Set(["new"]));
+
+  assert.match(text, /older user message/);
+  assert.doesNotMatch(text, /new message body/);
+});
