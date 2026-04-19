@@ -233,10 +233,10 @@ export function registerConsoleListeners(
 
     ctx.console.addListener("mio/persona-delete", async (personaId: string) => {
       const boundGroupIds = await personaService.listBoundGroupIds(personaId);
+      await personaService.deletePersona(personaId);
       if (geminiCacheManager) {
         await geminiCacheManager.invalidatePersonaCaches(personaId);
       }
-      await personaService.deletePersona(personaId);
       return {
         personaId,
         fallbackGroupIds: boundGroupIds,

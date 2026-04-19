@@ -113,3 +113,44 @@ test("GeminiCacheManager invalidates persona caches and requests Gemini deletion
   assert.equal(rows["mio.gemini_cache"].length, 0);
   assert.deepEqual(gemini.deletedNames, ["cachedContents/1"]);
 });
+
+test("GeminiCacheManager deduplicates concurrent cache creation for the same key", async () => {
+  const { ctx } = createFakeCtx();
+  let createCount = 0;
+  let releaseCreate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseCreate = resolve;
+  });
+  const ai = {
+    caches: {
+      async create() {
+        createCount += 1;
+        await gate;
+        return {
+          name: "cachedContents/concurrent",
+          expireTime: "2099-01-01T00:00:00.000Z",
+        };
+      },
+      async delete() {},
+    },
+  } as any;
+  const manager = new GeminiCacheManager(ctx, ai);
+  const input = {
+    cacheKey: "same",
+    modelName: "gemini-3-flash-preview",
+    personaId: "default",
+    personaHash: "hash-a",
+    promptVersion: "v1",
+    staticCoreText: "core",
+  };
+
+  const promiseA = manager.ensureStaticCoreCache(input);
+  const promiseB = manager.ensureStaticCoreCache(input);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(createCount, 1);
+
+  releaseCreate();
+  const [cacheA, cacheB] = await Promise.all([promiseA, promiseB]);
+  assert.equal(cacheA.cacheName, cacheB.cacheName);
+});

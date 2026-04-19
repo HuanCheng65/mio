@@ -3,13 +3,16 @@ import { tokenTracker } from "../llm/token-tracker";
 import type { RuntimeDeps, RuntimeState } from "./types";
 
 export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): void {
-  const { ctx, logger, config } = deps;
+  const { ctx, logger, config, geminiCacheManager } = deps;
 
   ctx.command("mio", "澪管理指令", { authority: 4 });
 
   ctx.command("mio.reload", "重载 prompt 模板和人设文件", { authority: 4 }).action(async () => {
     try {
       reloadPrompts();
+      if (geminiCacheManager) {
+        await geminiCacheManager.invalidateAllCaches();
+      }
       logger.info("[admin] prompt 模板已重载（数据库人设不受此命令影响）");
       return "prompt 模板已重载。数据库人设请通过 console persona studio 管理。";
     } catch (err) {

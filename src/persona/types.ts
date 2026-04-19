@@ -72,5 +72,6 @@ export function extendPersonaTables(ctx: Context) {
   }, {
     autoInc: true,
     primary: "id",
+    unique: [["layer", "cacheKey", "modelName"]],
   });
 }

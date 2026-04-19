@@ -25,12 +25,52 @@ function toExpiresAt(expireTime?: string): number {
 }
 
 export class GeminiCacheManager {
+  private inflight = new Map<string, Promise<GeminiCacheRecord>>();
+
   constructor(
     private readonly ctx: Context,
     private readonly ai: any,
   ) {}
 
   async ensureStaticCoreCache(input: EnsureStaticCoreCacheInput): Promise<GeminiCacheRecord> {
+    const existing = await this.findFreshCache(input.cacheKey, input.modelName);
+    if (existing) {
+      return existing;
+    }
+
+    const inflightKey = this.getInflightKey(input.cacheKey, input.modelName);
+    const pending = this.inflight.get(inflightKey);
+    if (pending) {
+      return pending;
+    }
+
+    const created = this.createStaticCoreCache(input).finally(() => {
+      this.inflight.delete(inflightKey);
+    });
+    this.inflight.set(inflightKey, created);
+    return created;
+  }
+
+  async invalidatePersonaCaches(personaId: string): Promise<void> {
+    const rows = await this.ctx.database.get("mio.gemini_cache", { personaId });
+    await this.deleteRows(rows);
+  }
+
+  async invalidateAllCaches(): Promise<void> {
+    const rows = await this.ctx.database.get("mio.gemini_cache", {});
+    await this.deleteRows(rows);
+  }
+
+  async invalidateByCacheKey(cacheKey: string): Promise<void> {
+    const rows = await this.ctx.database.get("mio.gemini_cache", { cacheKey });
+    await this.deleteRows(rows);
+  }
+
+  private getInflightKey(cacheKey: string, modelName: string): string {
+    return `${STATIC_CORE_LAYER}:${modelName}:${cacheKey}`;
+  }
+
+  private async createStaticCoreCache(input: EnsureStaticCoreCacheInput): Promise<GeminiCacheRecord> {
     const existing = await this.findFreshCache(input.cacheKey, input.modelName);
     if (existing) {
       return existing;
@@ -46,16 +86,6 @@ export class GeminiCacheManager {
     });
 
     return this.persist(created, input);
-  }
-
-  async invalidatePersonaCaches(personaId: string): Promise<void> {
-    const rows = await this.ctx.database.get("mio.gemini_cache", { personaId });
-    await this.deleteRows(rows);
-  }
-
-  async invalidateByCacheKey(cacheKey: string): Promise<void> {
-    const rows = await this.ctx.database.get("mio.gemini_cache", { cacheKey });
-    await this.deleteRows(rows);
   }
 
   private async findFreshCache(cacheKey: string, modelName: string): Promise<GeminiCacheRecord | null> {
