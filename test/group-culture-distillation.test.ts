@@ -966,6 +966,117 @@ test("maintainGroupCulture resolves same-id conflicts deterministically", async 
   assert.equal(updates[0].patch.lastConfirmed, fixedNow);
 });
 
+test("maintainGroupCulture suppresses legacy duplicate canonical group facts", async () => {
+  const fixedNow = 1713528000000;
+  const updates: Array<{ table: string; query: any; patch: any }> = [];
+  const existingFacts = [
+    {
+      id: 21,
+      groupId: "group-legacy",
+      subject: "group",
+      factType: "reaction_pattern",
+      content: "群里看到离谱内容会刷问号",
+      embedding: [1, 0],
+      confidence: 0.78,
+      sourceEpisodes: [],
+      firstObserved: fixedNow - 30 * 86400_000,
+      lastConfirmed: fixedNow - 1 * 86400_000,
+      supersededBy: null,
+      createdAt: fixedNow - 30 * 86400_000,
+    },
+    {
+      id: 22,
+      groupId: "group-legacy",
+      subject: "group",
+      factType: "reaction_pattern",
+      content: "大家看到离谱东西会刷问号",
+      embedding: [0.99, 0.01],
+      confidence: 0.55,
+      sourceEpisodes: [],
+      firstObserved: fixedNow - 60 * 86400_000,
+      lastConfirmed: fixedNow - 20 * 86400_000,
+      supersededBy: null,
+      createdAt: fixedNow - 60 * 86400_000,
+    },
+    {
+      id: 23,
+      groupId: "group-legacy",
+      subject: "group",
+      factType: "reaction_pattern",
+      content: "群里有人发逆天发言会刷草",
+      embedding: [0.4, 0.6],
+      confidence: 0.6,
+      sourceEpisodes: [],
+      firstObserved: fixedNow - 20 * 86400_000,
+      lastConfirmed: fixedNow - 2 * 86400_000,
+      supersededBy: null,
+      createdAt: fixedNow - 20 * 86400_000,
+    },
+  ];
+  const ctx = {
+    logger() {
+      return {
+        debug() {},
+        info() {},
+        warn() {},
+        error() {},
+      };
+    },
+    database: {
+      async get(table: string, query: any) {
+        if (table === "mio.culture_evidence" && query.groupId === "group-legacy") {
+          return [];
+        }
+        if (table === "mio.semantic" && query.groupId === "group-legacy" && query.subject === "group") {
+          return existingFacts;
+        }
+        return [];
+      },
+      async create() {
+        throw new Error("expected legacy cleanup, not create");
+      },
+      async set(table: string, query: any, patch: any) {
+        updates.push({ table, query, patch });
+      },
+    },
+  } as any;
+  const llm = {
+    async chat() {
+      return {
+        content: JSON.stringify({
+          promoted_facts: [],
+          merged_facts: [],
+          confirmed_facts: [],
+          decayed_facts: [],
+        }),
+        usage: { promptTokens: 0, completionTokens: 0, cachedTokens: 0 },
+      };
+    },
+  } as any;
+  const pipeline = new DistillationPipeline(ctx, llm, {
+    enabled: true,
+    embedding: {} as any,
+    extraction: {} as any,
+    distillation: {} as any,
+    distillationHour: 3,
+    flushIntervalMs: 300000,
+    maxPendingWrites: 20,
+    activePoolLimit: 200,
+  });
+
+  const originalNow = Date.now;
+  Date.now = () => fixedNow;
+  try {
+    await pipeline.maintainGroupCulture("group-legacy");
+  } finally {
+    Date.now = originalNow;
+  }
+
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0].query, { id: 22 });
+  assert.equal(updates[0].patch.supersededBy, 21);
+});
+
 test("buildGroupCulture injects canonical facts only with dedup and per-kind caps", async () => {
   const fixedNow = 1713528000000;
   const groupFacts = [
@@ -1246,4 +1357,175 @@ test("buildGroupCulture injects canonical facts only with dedup and per-kind cap
   assert.ok(!lines.some((line) => line.includes("这其实不是群文化 canonical fact")));
   assert.ok(!lines.some((line) => line.includes("这条已经被 supersede")));
   assert.equal(lines.filter((line) => line.includes("- ")).length, lines.length);
+});
+
+test("group culture distillation promotes canonical facts without surfacing example-specific evidence", async () => {
+  const fixedNow = 1713528000000;
+  const cultureEvidence: CultureEvidenceRow[] = [
+    {
+      id: 1,
+      groupId: "group-e2e",
+      kind: "tool_knowledge",
+      content: "群里有人会发 /选 苹果还是香蕉 让 37 帮忙选",
+      embedding: [1, 0],
+      confidence: 0.76,
+      sourceEpisodeId: null,
+      sourceWindowKey: "group-e2e:w1",
+      observedAt: fixedNow - 20_000,
+      lastSeenAt: fixedNow - 20_000,
+      status: "active",
+      clusterId: null,
+      createdAt: fixedNow - 20_000,
+    },
+    {
+      id: 2,
+      groupId: "group-e2e",
+      kind: "tool_knowledge",
+      content: "群里有人会发 /选 劳拉西泮还是盐酸氟西汀 让 37 给建议",
+      embedding: [0.99, 0.01],
+      confidence: 0.72,
+      sourceEpisodeId: null,
+      sourceWindowKey: "group-e2e:w2",
+      observedAt: fixedNow - 10_000,
+      lastSeenAt: fixedNow - 10_000,
+      status: "active",
+      clusterId: null,
+      createdAt: fixedNow - 10_000,
+    },
+    {
+      id: 3,
+      groupId: "group-e2e",
+      kind: "reaction_pattern",
+      content: "有人发雀魂离谱和牌截图，大家会刷问号",
+      embedding: [0, 1],
+      confidence: 0.74,
+      sourceEpisodeId: null,
+      sourceWindowKey: "group-e2e:w3",
+      observedAt: fixedNow - 18_000,
+      lastSeenAt: fixedNow - 18_000,
+      status: "active",
+      clusterId: null,
+      createdAt: fixedNow - 18_000,
+    },
+    {
+      id: 4,
+      groupId: "group-e2e",
+      kind: "reaction_pattern",
+      content: "群里看到离谱截图或者很强的东西会刷草和问号",
+      embedding: [0.01, 0.99],
+      confidence: 0.7,
+      sourceEpisodeId: null,
+      sourceWindowKey: "group-e2e:w4",
+      observedAt: fixedNow - 9_000,
+      lastSeenAt: fixedNow - 9_000,
+      status: "active",
+      clusterId: null,
+      createdAt: fixedNow - 9_000,
+    },
+  ];
+  const semanticRows: any[] = [];
+  const created: Array<{ table: string; row: any }> = [];
+  const ctx = {
+    logger() {
+      return {
+        debug() {},
+        info() {},
+        warn() {},
+        error() {},
+      };
+    },
+    database: {
+      async get(table: string, query: any) {
+        if (table === "mio.culture_evidence" && query.groupId === "group-e2e") {
+          return cultureEvidence;
+        }
+        if (table === "mio.semantic" && query.groupId === "group-e2e" && query.subject === "group") {
+          return semanticRows;
+        }
+        return [];
+      },
+      async create(table: string, row: any) {
+        const createdRow = { id: semanticRows.length + 100, ...row };
+        created.push({ table, row: createdRow });
+        if (table === "mio.semantic") {
+          semanticRows.push(createdRow);
+        }
+        return createdRow;
+      },
+      async set(_table: string, query: any, patch: any) {
+        const row = semanticRows.find((item) => item.id === query.id);
+        if (row) Object.assign(row, patch);
+      },
+    },
+  } as any;
+  const llm = {
+    async chat() {
+      return {
+        content: JSON.stringify({
+          promoted_facts: [
+            {
+              cluster_index: 0,
+              fact_type: "tool_knowledge",
+              content: "群里有个 37 bot，/选 可以帮忙做选择",
+              confidence: 0.8,
+            },
+            {
+              cluster_index: 1,
+              fact_type: "reaction_pattern",
+              content: "群里看到离谱内容时常会刷问号、草之类的反应",
+              confidence: 0.76,
+            },
+          ],
+          merged_facts: [],
+          confirmed_facts: [],
+          decayed_facts: [],
+        }),
+        usage: { promptTokens: 0, completionTokens: 0, cachedTokens: 0 },
+      };
+    },
+  } as any;
+  const embeddingService = {
+    async embed(text: string) {
+      if (text.includes("/选")) return [1, 0];
+      if (text.includes("问号") || text.includes("草")) return [0, 1];
+      return [0.5, 0.5];
+    },
+    async embedBatch(texts: string[]) {
+      return texts.map((text) => {
+        if (text.includes("/选")) return [1, 0];
+        if (text.includes("问号") || text.includes("草")) return [0, 1];
+        return [0.5, 0.5];
+      });
+    },
+  } as any;
+  const pipeline = new DistillationPipeline(ctx, llm, {
+    enabled: true,
+    embedding: {} as any,
+    extraction: {} as any,
+    distillation: {} as any,
+    distillationHour: 3,
+    flushIntervalMs: 300000,
+    maxPendingWrites: 20,
+    activePoolLimit: 200,
+  }, embeddingService);
+  const assembler = new ContextAssembler(ctx, {
+    getSessionVibe() {
+      return null;
+    },
+  } as any);
+
+  const originalNow = Date.now;
+  Date.now = () => fixedNow;
+  try {
+    await pipeline.maintainGroupCulture("group-e2e");
+    const text = await (assembler as any).buildGroupCulture("group-e2e");
+    const lines = text.split("\n").filter(Boolean);
+
+    assert.equal(created.filter(({ table }) => table === "mio.semantic").length, 2);
+    assert.ok(lines.some((line) => line.includes("/选 可以帮忙做选择")));
+    assert.ok(lines.some((line) => line.includes("问号、草之类的反应")));
+    assert.ok(!lines.some((line) => line.includes("劳拉西泮还是盐酸氟西汀")));
+  } finally {
+    Date.now = originalNow;
+  }
 });

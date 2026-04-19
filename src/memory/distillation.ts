@@ -21,6 +21,9 @@ const CULTURE_EVIDENCE_PROMOTION_MIN_WINDOWS = 2;
 const CULTURE_EVIDENCE_ACTIVE_FACT_LIMIT = 15;
 const CULTURE_EVIDENCE_PROMOTABLE_CLUSTER_LIMIT = 8;
 const CULTURE_CANDIDATE_RECENT_WINDOW_MS = 30 * CULTURE_EVIDENCE_DAY_MS;
+const GROUP_CULTURE_DEDUP_SIMILARITY = 0.9;
+const GROUP_CULTURE_TEXT_DEDUP_SIMILARITY = 0.5;
+const GROUP_CULTURE_RECENCY_WEIGHT = 0.2;
 const CULTURE_EVIDENCE_KINDS: CultureEvidenceKind[] = [
   "group_expression",
   "reaction_pattern",
@@ -129,6 +132,69 @@ function normalizeGroupFactType(
   fallback: CultureEvidenceKind,
 ): MioSemanticRow["factType"] {
   return isGroupFactType(value) ? value : fallback;
+}
+
+function normalizeGroupCultureContent(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[，。！？、,.!?:"'`~\-/\\()[\]{}]/g, "");
+}
+
+function computeGroupCultureTextSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+
+  const makeBigrams = (text: string): string[] => {
+    const grams: string[] = [];
+    for (let i = 0; i < text.length - 1; i++) {
+      grams.push(text.slice(i, i + 2));
+    }
+    return grams;
+  };
+
+  const aBigrams = makeBigrams(a);
+  const bBigrams = makeBigrams(b);
+  if (aBigrams.length === 0 || bBigrams.length === 0) return 0;
+
+  const counts = new Map<string, number>();
+  for (const gram of aBigrams) {
+    counts.set(gram, (counts.get(gram) || 0) + 1);
+  }
+
+  let overlap = 0;
+  for (const gram of bBigrams) {
+    const count = counts.get(gram) || 0;
+    if (count <= 0) continue;
+    overlap++;
+    counts.set(gram, count - 1);
+  }
+
+  return (2 * overlap) / (aBigrams.length + bBigrams.length);
+}
+
+function computeGroupFactPriority(fact: MioSemanticRow): number {
+  const recencyDays = Math.max(0, (Date.now() - fact.lastConfirmed) / CULTURE_EVIDENCE_DAY_MS);
+  return fact.confidence + (1 / (1 + recencyDays)) * GROUP_CULTURE_RECENCY_WEIGHT;
+}
+
+function areLegacyGroupFactsNearDuplicate(a: MioSemanticRow, b: MioSemanticRow): boolean {
+  if (a.factType !== b.factType) return false;
+
+  const normalizedA = normalizeGroupCultureContent(a.content);
+  const normalizedB = normalizeGroupCultureContent(b.content);
+  if (normalizedA === normalizedB) return true;
+
+  const textSimilarity = computeGroupCultureTextSimilarity(normalizedA, normalizedB);
+  if (a.embedding.length > 0 && a.embedding.length === b.embedding.length) {
+    return (
+      cosineSimilarity(a.embedding, b.embedding) >= GROUP_CULTURE_DEDUP_SIMILARITY &&
+      textSimilarity >= GROUP_CULTURE_TEXT_DEDUP_SIMILARITY
+    );
+  }
+
+  return textSimilarity >= GROUP_CULTURE_TEXT_DEDUP_SIMILARITY;
 }
 
 function formatCultureEvidenceSummary(row: CultureEvidenceRow): string {
@@ -759,6 +825,7 @@ export class DistillationPipeline {
     let merged = 0;
     let confirmed = 0;
     let decayed = 0;
+    let suppressed = 0;
     const pendingPatches = new Map<number, GroupCultureFactPatchState>();
 
     const findSimilarFact = (factType: MioSemanticRow["factType"], embedding: number[]) => {
@@ -899,6 +966,37 @@ export class DistillationPipeline {
       decayed++;
     }
 
+    const cleanupCandidates = [...activeFacts]
+      .filter(
+        (fact) =>
+          fact.subject === "group" &&
+          isGroupFactType(fact.factType) &&
+          isActiveSemanticFact(fact),
+      )
+      .sort((a, b) => {
+        const priorityDelta = computeGroupFactPriority(b) - computeGroupFactPriority(a);
+        if (priorityDelta !== 0) return priorityDelta;
+        if (b.lastConfirmed !== a.lastConfirmed) return b.lastConfirmed - a.lastConfirmed;
+        if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+        return a.id - b.id;
+      });
+
+    for (let i = 0; i < cleanupCandidates.length; i++) {
+      const winner = cleanupCandidates[i];
+      if (!isActiveSemanticFact(winner)) continue;
+
+      for (let j = i + 1; j < cleanupCandidates.length; j++) {
+        const candidate = cleanupCandidates[j];
+        if (!isActiveSemanticFact(candidate)) continue;
+        if (!areLegacyGroupFactsNearDuplicate(winner, candidate)) continue;
+
+        queuePatch(candidate.id, "merged", {
+          supersededBy: winner.id,
+        });
+        suppressed++;
+      }
+    }
+
     for (const [factId, state] of pendingPatches) {
       const patch = resolvePatch(state);
       if (!patch) continue;
@@ -916,7 +1014,7 @@ export class DistillationPipeline {
     }
 
     logger.info(
-      `[${groupId}] 群文化维护: +${promoted} 晋升, ${merged} 合并, ${confirmed} 确认, ${decayed} 衰减`,
+      `[${groupId}] 群文化维护: +${promoted} 晋升, ${merged} 合并, ${confirmed} 确认, ${decayed} 衰减, ${suppressed} 清理`,
     );
   }
 
