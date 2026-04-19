@@ -42,6 +42,17 @@ declare module "@koishijs/plugin-console" {
     "mio/migrate-participants"(): Promise<string>;
     "mio/token-stats"(): Promise<TokenStats>;
     "mio/token-stats-reset"(): Promise<string>;
+    "mio/persona-list"(): Promise<any[]>;
+    "mio/persona-get"(personaId: string): Promise<any>;
+    "mio/persona-create"(input: { name: string; content: string }): Promise<any>;
+    "mio/persona-duplicate"(personaId: string): Promise<any>;
+    "mio/persona-rename"(input: { personaId: string; name: string }): Promise<any>;
+    "mio/persona-save"(input: { personaId: string; content: string }): Promise<any>;
+    "mio/persona-delete"(personaId: string): Promise<any>;
+    "mio/persona-set-default"(personaId: string): Promise<any>;
+    "mio/persona-bind-group"(input: { groupId: string; personaId: string }): Promise<any>;
+    "mio/persona-unbind-group"(groupId: string): Promise<any>;
+    "mio/persona-cache-stats"(): Promise<any>;
   }
 }
 
@@ -164,7 +175,7 @@ export function apply(ctx: Context, config: MioConfig) {
     logger.info("记忆提取调度器已启用 (batch: 30 条, timeout: 15 分钟, active: 8 条)");
   }
 
-  registerConsoleListeners(ctx, logger, memory);
+  registerConsoleListeners(ctx, logger, memory, personaService, geminiCacheManager);
 
   const state = createRuntimeState();
   const hourlyTimer = setInterval(() => state.hourlyReplies.clear(), 3600_000);

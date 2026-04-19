@@ -2,8 +2,16 @@ import * as path from "path";
 import { Context } from "koishi";
 import { MemoryService } from "./memory";
 import { tokenTracker } from "./llm/token-tracker";
+import { PersonaService } from "./persona/service";
+import { GeminiCacheManager } from "./llm/gemini-cache";
 
-export function registerConsoleListeners(ctx: Context, logger: any, memory: MemoryService | null): void {
+export function registerConsoleListeners(
+  ctx: Context,
+  logger: any,
+  memory: MemoryService | null,
+  personaService?: PersonaService,
+  geminiCacheManager?: GeminiCacheManager | null,
+): void {
   ctx.inject(["console"], (ctx) => {
     ctx.console.addEntry({
       dev: path.resolve(__dirname, "../client/index.ts"),
@@ -176,6 +184,81 @@ export function registerConsoleListeners(ctx: Context, logger: any, memory: Memo
     ctx.console.addListener("mio/token-stats-reset", async () => {
       await tokenTracker.reset();
       return "统计已重置";
+    });
+
+    if (!personaService) {
+      return;
+    }
+
+    ctx.console.addListener("mio/persona-list", async () => {
+      const personas = await personaService.listPersonas();
+      const bindings = await personaService.listBindings();
+      return personas.map((persona) => {
+        const boundGroupIds = bindings
+          .filter((binding) => binding.personaId === persona.id)
+          .map((binding) => binding.groupId);
+        return {
+          ...persona,
+          boundGroupIds,
+          boundGroupCount: boundGroupIds.length,
+        };
+      });
+    });
+
+    ctx.console.addListener("mio/persona-get", async (personaId: string) => {
+      const persona = await personaService.getPersona(personaId);
+      const boundGroupIds = await personaService.listBoundGroupIds(personaId);
+      return { ...persona, boundGroupIds };
+    });
+
+    ctx.console.addListener("mio/persona-create", async (input: { name: string; content: string }) => {
+      return personaService.createPersona(input);
+    });
+
+    ctx.console.addListener("mio/persona-duplicate", async (personaId: string) => {
+      return personaService.duplicatePersona(personaId);
+    });
+
+    ctx.console.addListener("mio/persona-rename", async (input: { personaId: string; name: string }) => {
+      return personaService.renamePersona(input);
+    });
+
+    ctx.console.addListener("mio/persona-save", async (input: { personaId: string; content: string }) => {
+      const persona = await personaService.savePersona(input);
+      if (geminiCacheManager) {
+        await geminiCacheManager.invalidatePersonaCaches(input.personaId);
+      }
+      return persona;
+    });
+
+    ctx.console.addListener("mio/persona-delete", async (personaId: string) => {
+      const boundGroupIds = await personaService.listBoundGroupIds(personaId);
+      if (geminiCacheManager) {
+        await geminiCacheManager.invalidatePersonaCaches(personaId);
+      }
+      await personaService.deletePersona(personaId);
+      return {
+        personaId,
+        fallbackGroupIds: boundGroupIds,
+      };
+    });
+
+    ctx.console.addListener("mio/persona-set-default", async (personaId: string) => {
+      return personaService.setDefaultPersona(personaId);
+    });
+
+    ctx.console.addListener("mio/persona-bind-group", async (input: { groupId: string; personaId: string }) => {
+      await personaService.bindGroup(input.groupId, input.personaId);
+      return personaService.resolveForGroup(input.groupId);
+    });
+
+    ctx.console.addListener("mio/persona-unbind-group", async (groupId: string) => {
+      await personaService.unbindGroup(groupId);
+      return personaService.resolveForGroup(groupId);
+    });
+
+    ctx.console.addListener("mio/persona-cache-stats", async () => {
+      return personaService.getCacheStats();
     });
   });
 }

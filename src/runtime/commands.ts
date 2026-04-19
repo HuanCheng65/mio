@@ -3,16 +3,15 @@ import { tokenTracker } from "../llm/token-tracker";
 import type { RuntimeDeps, RuntimeState } from "./types";
 
 export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): void {
-  const { ctx, logger, promptBuilder, config } = deps;
+  const { ctx, logger, config } = deps;
 
   ctx.command("mio", "澪管理指令", { authority: 4 });
 
   ctx.command("mio.reload", "重载 prompt 模板和人设文件", { authority: 4 }).action(async () => {
     try {
       reloadPrompts();
-      promptBuilder.reloadPersona();
-      logger.info("[admin] prompts + persona 已重载");
-      return `人设和 prompt 模板已重载\n人设: ${promptBuilder.getPersonaLength()} 字 | "${promptBuilder.getPersonaPreview()}"`;
+      logger.info("[admin] prompt 模板已重载（数据库人设不受此命令影响）");
+      return "prompt 模板已重载。数据库人设请通过 console persona studio 管理。";
     } catch (err) {
       logger.error("[admin] 重载失败:", err);
       return `重载失败: ${err}`;
