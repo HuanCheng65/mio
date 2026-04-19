@@ -8,6 +8,18 @@ export interface ModelUsage {
   calls: number
 }
 
+export type ConversationCacheHitSource = 'explicit' | 'implicit-only' | 'none'
+
+export interface ConversationCacheLogInput {
+  personaId: string
+  personaName: string
+  personaHash: string
+  cacheHitSource: ConversationCacheHitSource
+  cachedTokens: number
+  cacheName?: string
+  phase?: 'main' | 'search'
+}
+
 export type PurposeUsageMap = Record<string, ModelUsage>
 
 interface BufferedUsage extends ModelUsage {
@@ -37,6 +49,26 @@ function addUsage(target: ModelUsage, promptTokens: number, completionTokens: nu
   target.completionTokens += completionTokens
   target.cachedTokens += cachedTokens
   target.calls += calls
+}
+
+export function formatConversationCacheLog(input: ConversationCacheLogInput): string {
+  const parts = ['conversation-cache']
+
+  if (input.phase) {
+    parts.push(`phase=${input.phase}`)
+  }
+
+  parts.push(`persona=${input.personaId}`)
+  parts.push(`personaName=${input.personaName}`)
+  parts.push(`personaHash=${input.personaHash.slice(0, 8)}`)
+  parts.push(`cache=${input.cacheHitSource}`)
+  parts.push(`cachedTokens=${input.cachedTokens}`)
+
+  if (input.cacheName) {
+    parts.push(`cacheName=${input.cacheName}`)
+  }
+
+  return parts.join(' ')
 }
 
 function ensureUsage(map: Record<string, ModelUsage>, key: string): ModelUsage {

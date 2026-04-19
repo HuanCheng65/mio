@@ -16,6 +16,7 @@ import {
   stickerMimeType,
   validateResponse,
 } from "../helpers";
+import { ConversationCacheHitSource, formatConversationCacheLog } from "../llm/token-tracker";
 import { RuntimeDeps, RuntimeState } from "./types";
 
 export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState) {
@@ -37,6 +38,9 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
   } = deps;
 
   async function resolvePersonaAndCache(groupId: string): Promise<{
+    personaId: string;
+    personaName: string;
+    personaHash: string;
     personaContent?: string;
     cachedContent?: string;
   }> {
@@ -69,9 +73,20 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
     }
 
     return {
+      personaId: persona.id,
+      personaName: persona.name,
+      personaHash: persona.contentHash,
       personaContent: persona.content,
       cachedContent,
     };
+  }
+
+  function resolveCacheHitSource(cachedContent: string | undefined, cachedTokens: number): ConversationCacheHitSource {
+    if (cachedTokens > 0) {
+      return cachedContent ? "explicit" : "implicit-only";
+    }
+
+    return "none";
   }
 
   async function triggerMemoryExtraction(groupId: string, reason: string): Promise<void> {
@@ -390,7 +405,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         }
       }
 
-      const { personaContent, cachedContent } = await resolvePersonaAndCache(groupId);
+      const { personaId, personaName, personaHash, personaContent, cachedContent } = await resolvePersonaAndCache(groupId);
       const currentStickerSummary = stickerService?.getSummary() || undefined;
       const systemPrompt = promptBuilder.buildSystemPrompt({
         personaContent,
@@ -420,6 +435,18 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         ],
         config.models.chat,
         { signal, purpose: "conversation-search", cachedContent },
+      );
+
+      logger.info(
+        `[${groupId}] ${formatConversationCacheLog({
+          phase: "search",
+          personaId,
+          personaName,
+          personaHash,
+          cacheHitSource: resolveCacheHitSource(cachedContent, response.usage.cachedTokens),
+          cachedTokens: response.usage.cachedTokens,
+          cacheName: cachedContent,
+        })}`,
       );
 
       logger.info(
@@ -561,7 +588,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
 
       const allMessages = buffer.getRecent(groupId);
       const { text: recentMessagesText, msgMap } = renderer.render(allMessages, new Set(), newMessageIds);
-      const { personaContent, cachedContent } = await resolvePersonaAndCache(groupId);
+      const { personaId, personaName, personaHash, personaContent, cachedContent } = await resolvePersonaAndCache(groupId);
       const currentStickerSummary = stickerService?.getSummary() || undefined;
       const systemPrompt = promptBuilder.buildSystemPrompt({
         personaContent,
@@ -601,6 +628,18 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
           purpose: "conversation",
           cachedContent,
         },
+      );
+
+      logger.info(
+        `[${groupId}] ${formatConversationCacheLog({
+          phase: "main",
+          personaId,
+          personaName,
+          personaHash,
+          cacheHitSource: resolveCacheHitSource(cachedContent, response.usage.cachedTokens),
+          cachedTokens: response.usage.cachedTokens,
+          cacheName: cachedContent,
+        })}`,
       );
 
       if (controller.signal.aborted) {
