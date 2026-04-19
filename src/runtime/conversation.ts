@@ -499,8 +499,6 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
       }
       const newMessageIds = new Set(newMessages.map((m) => m.id));
 
-      const newMessageMarker = newMessages.map((msg) => renderer.renderMessage(msg)).join("\n");
-
       let memoryUserProfile: string | undefined;
       let memoryMemories: string | undefined;
       let memoryGroupCulture: string | undefined;
@@ -532,7 +530,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
 
       const fiveMinAgo = Date.now() - 5 * 60_000;
       const recentBotCount = buffer.getRecent(groupId).filter((m) => m.isBot && m.timestamp > fiveMinAgo).length;
-      const userPrompt = promptBuilder.buildUserPrompt(newMessageMarker, recentBotCount);
+      const userPrompt = promptBuilder.buildUserPrompt(recentBotCount);
 
       if (memoryUserProfile || memoryMemories || memoryGroupCulture || currentStickerSummary) {
         logger.debug(
@@ -544,7 +542,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         );
       }
 
-      logger.debug(`[${groupId}] 本轮新消息 (${newMessages.length} 条):\n${newMessageMarker}`);
+      logger.debug(`[${groupId}] 本轮新消息数量: ${newMessages.length}`);
       logger.debug("调用 LLM...");
       const response = await llm.chat(
         [

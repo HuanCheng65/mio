@@ -1,4 +1,5 @@
 import { Lunar } from "lunar-javascript";
+import { createHash } from "node:crypto";
 import { getPromptManager } from "../memory/prompt-manager";
 import { getPersonaLayer } from "./layer2-persona";
 import { ALLOWED_REACT_EMOJI_TEXT } from "../emoji/react-policy";
@@ -6,8 +7,7 @@ import { ALLOWED_REACT_EMOJI_TEXT } from "../emoji/react-policy";
 const promptManager = getPromptManager();
 
 interface PromptOptions {
-  groupId: string;
-  userId: string;
+  personaContent?: string;
   userProfile?: string;
   groupCulture?: string;
   memories?: string;
@@ -15,6 +15,15 @@ interface PromptOptions {
   backgroundKnowledge?: string;
   stickerSummary?: string;
   recentMessages: string;
+}
+
+interface StaticCoreOptions {
+  personaContent: string;
+}
+
+interface PromptStaticCore {
+  text: string;
+  promptVersion: string;
 }
 
 export class PromptBuilder {
@@ -39,32 +48,43 @@ export class PromptBuilder {
   }
 
   /**
-   * 构建 System Prompt
-   * 优化前缀缓存：静态内容在前，动态内容在后
+   * 构建稳定静态前缀，供缓存层复用。
    */
-  buildSystemPrompt(options: PromptOptions): string {
+  buildStaticCore(options: StaticCoreOptions): PromptStaticCore {
     const parts: string[] = [];
 
-    // ===== 静态部分（完全不变，最大化缓存命中）=====
-
-    // Layer 0: 认知框架
+    parts.push("# 认知框架");
     parts.push(promptManager.getRaw("chat_system_layer0_cognitive"));
-
-    // Layer 1: 行为原则
     parts.push("\n---\n");
+    parts.push("# 行为原则");
     parts.push(promptManager.getRaw("chat_system_layer1_behavior"));
-
-    // Layer 2: 输出格式说明（从 user prompt 移到这里，减少重复）
     parts.push("\n---\n");
+    parts.push("# 输出格式");
     parts.push(
       promptManager.get("chat_system_layer2_format", {
         allowedReactEmojis: ALLOWED_REACT_EMOJI_TEXT,
       }),
     );
-
-    // Layer 3: 人设（很少变化）
     parts.push("\n---\n");
-    parts.push(this.layer3Persona);
+    parts.push("# 人设");
+    parts.push(options.personaContent);
+
+    const text = parts.join("\n");
+    const promptVersion = createHash("sha256").update(text).digest("hex");
+    return { text, promptVersion };
+  }
+
+  /**
+   * 构建 System Prompt
+   * 优化前缀缓存：静态内容在前，动态内容在后
+   */
+  buildSystemPrompt(options: PromptOptions): string {
+    const parts: string[] = [];
+    const staticCore = this.buildStaticCore({
+      personaContent: options.personaContent ?? this.layer3Persona,
+    });
+
+    parts.push(staticCore.text);
 
     // ===== 动态部分（变化频率：偶尔到频繁）=====
 
@@ -129,14 +149,11 @@ export class PromptBuilder {
   /**
    * 构建 User Prompt（简化版，格式说明已移到 system）
    */
-  buildUserPrompt(newMessageMarker: string, recentBotCount: number): string {
+  buildUserPrompt(recentBotCount: number): string {
     const activity =
       recentBotCount > 0
         ? `（你最近 5 分钟内说了 ${recentBotCount} 条消息。）\n`
         : "";
-    return promptManager.get("chat_user_simple", {
-      newMessages: newMessageMarker,
-      recentBotActivity: activity,
-    });
+    return `${activity}最近群聊记录里带有 [新消息] 标记的部分就是刚刚发生的内容。看完了，输出 JSON。`;
   }
 }
