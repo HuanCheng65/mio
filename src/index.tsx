@@ -25,7 +25,7 @@ import { createConversationRuntime } from "./runtime/conversation";
 import { registerHistoryAndReadyHandlers } from "./runtime/history";
 import { registerRuntimeEvents } from "./runtime/events";
 import { registerAdminCommands } from "./runtime/commands";
-import { registerPersonaTables } from "./persona/types";
+import { extendPersonaTables } from "./persona/types";
 import { PersonaService, seedDefaultPersonaIfMissing } from "./persona/service";
 
 declare module "@koishijs/plugin-console" {
@@ -51,7 +51,7 @@ export { Config };
 export function apply(ctx: Context, config: MioConfig) {
   const logger = ctx.logger("mio");
   reloadPrompts();
-  registerPersonaTables(ctx);
+  extendPersonaTables(ctx);
 
   if (!config?.providers || config.providers.length === 0) {
     logger.warn("未配置任何 LLM 供应商，插件将不会工作");
