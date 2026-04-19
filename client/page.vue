@@ -1,398 +1,332 @@
 <template>
   <k-layout>
-    <div class="mio-dashboard">
-      <!-- 顶部统计卡片 -->
-      <div class="row">
-        <k-card class="card">
-          <h2>记忆统计</h2>
-          <div v-if="stats">
-            <p>
-              <strong>Episodic 记忆:</strong> {{ stats.episodic.active }} 条活跃 /
-              {{ stats.episodic.archived }} 条已归档
-            </p>
-            <p><strong>Relational 记录:</strong> {{ stats.relational }} 条</p>
-            <p><strong>Semantic Facts:</strong> {{ stats.semantic }} 条</p>
-          </div>
-          <div v-else><p>加载中...</p></div>
-        </k-card>
+    <div class="mio-console">
+      <header class="console-hero">
+        <div>
+          <p class="eyebrow">Mio Console</p>
+          <h1>统一控制台</h1>
+          <p class="hero-copy">
+            把 persona studio、运行统计和维护工具放到同一个入口里，同时保持分区清晰，避免互相打架。
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button class="action-button action-button--ghost" type="button" @click="refreshAll">
+            <RefreshCw :size="16" />
+            <span>刷新全部</span>
+          </button>
+        </div>
+      </header>
 
-        <k-card class="card">
-          <h2>Token 用量</h2>
-          <div v-if="tokenStats">
-            <div class="stat-row">
-              <div class="stat-box blue">
-                <div class="stat-number">{{ formatNumber(tokenStats.totalPromptTokens + tokenStats.totalCompletionTokens) }}</div>
-                <div class="stat-label">总 Tokens</div>
-              </div>
-              <div class="stat-box green">
-                <div class="stat-number">{{ tokenStats.totalCalls }}</div>
-                <div class="stat-label">总调用次数</div>
-              </div>
-              <div class="stat-box purple">
-                <div class="stat-number">{{ todayTokens }}</div>
-                <div class="stat-label">今日 Tokens</div>
-              </div>
-              <div class="stat-box orange">
-                <div class="stat-number">{{ formatNumber(tokenStats.totalCachedTokens) }}</div>
-                <div class="stat-label">缓存命中</div>
-              </div>
-            </div>
-            <div style="margin-top: 12px">
-              <el-button size="small" @click="loadTokenStats">刷新</el-button>
-              <el-button size="small" type="danger" @click="resetTokenStats">重置全部</el-button>
-            </div>
+      <section class="summary-grid">
+        <article class="summary-card">
+          <div class="summary-icon">
+            <Users :size="18" />
           </div>
-          <div v-else><p>加载中...</p></div>
-        </k-card>
-      </div>
-
-      <!-- Token 明细 -->
-      <div class="row" v-if="tokenStats">
-        <k-card class="card">
-          <h2>按模型</h2>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="text-align: left">模型</th>
-                <th>Prompt</th>
-                <th>Cached</th>
-                <th>Completion</th>
-                <th>调用</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(usage, model) in tokenStats.byModel" :key="model">
-                <td style="text-align: left; word-break: break-all">{{ model }}</td>
-                <td>{{ formatNumber(usage.promptTokens) }}</td>
-                <td style="color: #e6a23c">{{ formatNumber(usage.cachedTokens) }}</td>
-                <td>{{ formatNumber(usage.completionTokens) }}</td>
-                <td>{{ usage.calls }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </k-card>
-
-        <k-card class="card">
-          <h2>按用途</h2>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="text-align: left">用途</th>
-                <th>Prompt</th>
-                <th>Cached</th>
-                <th>Completion</th>
-                <th>调用</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(usage, purpose) in sortedByPurpose" :key="purpose">
-                <td style="text-align: left; word-break: break-all">{{ purpose }}</td>
-                <td>{{ formatNumber(usage.promptTokens) }}</td>
-                <td style="color: #e6a23c">{{ formatNumber(usage.cachedTokens) }}</td>
-                <td>{{ formatNumber(usage.completionTokens) }}</td>
-                <td>{{ usage.calls }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </k-card>
-
-        <k-card class="card">
-          <h2>按日期</h2>
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="text-align: left">日期</th>
-                <th>Tokens</th>
-                <th>调用</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(usage, date) in sortedByDate" :key="date">
-                <td style="text-align: left">{{ date }}</td>
-                <td>{{ formatNumber(usage.promptTokens + usage.completionTokens) }}</td>
-                <td>{{ usage.calls }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </k-card>
-      </div>
-
-      <!-- 操作区 -->
-      <div class="row">
-        <k-card class="card">
-          <h2>记忆蒸馏</h2>
-          <p>蒸馏会将 Working Memory 中的记忆整合到长期记忆中，并更新关系印象。</p>
-          <div style="margin: 16px 0">
-            <el-button
-              type="primary"
-              :loading="distilling"
-              @click="triggerDistillation"
-              :disabled="!memoryEnabled"
-            >
-              {{ distilling ? "蒸馏中..." : "手动触发蒸馏" }}
-            </el-button>
-            <el-button
-              type="default"
-              :loading="flushing"
-              @click="flushMemory"
-              :disabled="!memoryEnabled"
-            >
-              {{ flushing ? "写入中..." : "立即写入 Working Memory" }}
-            </el-button>
+          <div>
+            <p class="summary-label">默认人设</p>
+            <strong>{{ studio.defaultPersona.value?.name ?? "加载中" }}</strong>
+            <p class="summary-meta">{{ studio.totalBoundGroups.value }} 个显式绑定群</p>
           </div>
-          <div v-if="!memoryEnabled" style="color: #999">记忆系统未启用</div>
-          <div v-if="lastResult" class="result-box">
-            <h3>操作结果</h3>
-            <pre>{{ lastResult }}</pre>
-          </div>
-        </k-card>
+        </article>
 
-        <k-card class="card">
-          <h2>数据库维护</h2>
-          <p>清理和修复数据库中的历史数据。</p>
-          <div style="margin: 16px 0">
-            <el-button
-              type="warning"
-              :loading="migrating"
-              @click="migrateParticipants"
-            >
-              {{ migrating ? "迁移中..." : "修复 Participants 字段" }}
-            </el-button>
-            <p style="margin-top: 8px; font-size: 12px; color: #999">
-              将 episodic 记忆中的 participants 字段统一格式
-            </p>
+        <article class="summary-card">
+          <div class="summary-icon">
+            <LayoutPanelLeft :size="18" />
           </div>
-          <div v-if="migrateResult" class="result-box warning">
-            <h3>迁移结果</h3>
-            <pre>{{ migrateResult }}</pre>
+          <div>
+            <p class="summary-label">人设总数</p>
+            <strong>{{ studio.personas.value.length }}</strong>
+            <p class="summary-meta">{{ buildCacheSummary(studio.cacheStats.value) }}</p>
           </div>
-        </k-card>
-      </div>
+        </article>
+
+        <article class="summary-card">
+          <div class="summary-icon">
+            <Activity :size="18" />
+          </div>
+          <div>
+            <p class="summary-label">运行状态</p>
+            <strong>{{ runtime.memoryEnabled.value ? "Memory On" : "Memory Off" }}</strong>
+            <p class="summary-meta">{{ runtime.tokenStats.value?.totalCalls ?? 0 }} 次模型调用</p>
+          </div>
+        </article>
+
+        <article class="summary-card">
+          <div class="summary-icon">
+            <Database :size="18" />
+          </div>
+          <div>
+            <p class="summary-label">Token 总量</p>
+            <strong>{{ totalTokens }}</strong>
+            <p class="summary-meta">今日 {{ runtime.todayTokens.value }} Tokens</p>
+          </div>
+        </article>
+      </section>
+
+      <nav class="console-nav" aria-label="Mio Console Sections">
+        <button
+          v-for="section in sections"
+          :key="section.id"
+          class="nav-chip"
+          :class="{ 'nav-chip--active': activeSection === section.id }"
+          type="button"
+          @click="activeSection = section.id"
+        >
+          <component :is="section.icon" :size="16" />
+          <span>{{ section.label }}</span>
+        </button>
+      </nav>
+
+      <section class="console-panel">
+        <PersonaStudioPanel v-if="activeSection === 'persona'" :studio="studio" />
+        <RuntimeOverviewPanel v-else-if="activeSection === 'runtime'" :runtime="runtime" />
+        <MaintenanceToolsPanel v-else :runtime="runtime" />
+      </section>
     </div>
   </k-layout>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted } from "vue";
-import { send, message } from "@koishijs/client";
+import { computed, onMounted, ref } from "vue";
+import {
+  Activity,
+  Database,
+  LayoutPanelLeft,
+  RefreshCw,
+  ShieldAlert,
+  Users,
+} from "lucide-vue-next";
+import { buildCacheSummary } from "./persona-ui";
+import { usePersonaStudio } from "./composables/use-persona-studio";
+import { useRuntimeConsole } from "./composables/use-runtime-console";
+import PersonaStudioPanel from "./components/persona-studio-panel.vue";
+import RuntimeOverviewPanel from "./components/runtime-overview-panel.vue";
+import MaintenanceToolsPanel from "./components/maintenance-tools-panel.vue";
 
-const stats = ref<any>(null);
-const tokenStats = ref<any>(null);
-const distilling = ref(false);
-const flushing = ref(false);
-const migrating = ref(false);
-const memoryEnabled = ref(true);
-const lastResult = ref("");
-const migrateResult = ref("");
+const studio = usePersonaStudio();
+const runtime = useRuntimeConsole();
 
-function formatNumber(n: number): string {
-  return n.toLocaleString();
-}
+const sections = [
+  { id: "persona", label: "Persona Studio", icon: LayoutPanelLeft },
+  { id: "runtime", label: "运行统计", icon: Activity },
+  { id: "maintenance", label: "维护工具", icon: ShieldAlert },
+] as const;
 
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+const activeSection = ref<(typeof sections)[number]["id"]>("persona");
 
-const sortedByDate = computed(() => {
-  if (!tokenStats.value?.byDate) return {};
-  const entries = Object.entries(tokenStats.value.byDate);
-  entries.sort((a, b) => b[0].localeCompare(a[0]));
-  return Object.fromEntries(entries);
+const totalTokens = computed(() => {
+  const stats = runtime.tokenStats.value;
+  if (!stats) {
+    return "0";
+  }
+
+  return runtime.formatNumber(stats.totalPromptTokens + stats.totalCompletionTokens);
 });
 
-const sortedByPurpose = computed(() => {
-  if (!tokenStats.value?.byPurpose) return {};
-  const entries = Object.entries(tokenStats.value.byPurpose);
-  entries.sort((a, b) => {
-    const tokensA = a[1].promptTokens + a[1].completionTokens;
-    const tokensB = b[1].promptTokens + b[1].completionTokens;
-    return tokensB - tokensA;
-  });
-  return Object.fromEntries(entries);
-});
-
-const todayTokens = computed(() => {
-  const d = tokenStats.value?.byDate?.[today()];
-  if (!d) return "0";
-  return formatNumber(d.promptTokens + d.completionTokens);
-});
-
-async function loadStats() {
-  try {
-    const data = await send("mio/memory-stats");
-    stats.value = data;
-    memoryEnabled.value = data.enabled;
-  } catch (err) {
-    message.error("加载统计失败: " + err.message);
-  }
-}
-
-async function loadTokenStats() {
-  try {
-    tokenStats.value = await send("mio/token-stats");
-  } catch (err) {
-    message.error("加载 Token 统计失败: " + err.message);
-  }
-}
-
-async function resetTokenStats() {
-  try {
-    await send("mio/token-stats-reset");
-    message.success("统计已重置");
-    await loadTokenStats();
-  } catch (err) {
-    message.error("重置失败: " + err.message);
-  }
-}
-
-async function triggerDistillation() {
-  distilling.value = true;
-  lastResult.value = "";
-  try {
-    const result = await send("mio/trigger-distillation");
-    lastResult.value = result;
-    message.success("蒸馏完成");
-    await loadStats();
-  } catch (err) {
-    message.error("蒸馏失败: " + err.message);
-    lastResult.value = "错误: " + err.message;
-  } finally {
-    distilling.value = false;
-  }
-}
-
-async function flushMemory() {
-  flushing.value = true;
-  lastResult.value = "";
-  try {
-    const result = await send("mio/flush-memory");
-    lastResult.value = result;
-    message.success("写入完成");
-    await loadStats();
-  } catch (err) {
-    message.error("写入失败: " + err.message);
-    lastResult.value = "错误: " + err.message;
-  } finally {
-    flushing.value = false;
-  }
-}
-
-async function migrateParticipants() {
-  migrating.value = true;
-  migrateResult.value = "";
-  try {
-    const result = await send("mio/migrate-participants");
-    migrateResult.value = result;
-    message.success("迁移完成");
-    await loadStats();
-  } catch (err) {
-    message.error("迁移失败: " + err.message);
-    migrateResult.value = "错误: " + err.message;
-  } finally {
-    migrating.value = false;
-  }
+async function refreshAll() {
+  await Promise.all([
+    studio.refreshStudio(),
+    runtime.refreshAll(),
+  ]);
 }
 
 onMounted(() => {
-  loadStats();
-  loadTokenStats();
+  void refreshAll();
 });
 </script>
 
 <style scoped>
-.mio-dashboard {
-  padding: 16px;
-  max-width: 1200px;
+.mio-console {
+  --panel-bg: rgba(255, 255, 255, 0.92);
+  --panel-border: rgba(15, 23, 42, 0.08);
+  --text-strong: #0f172a;
+  --text-base: #334155;
+  --text-soft: #64748b;
+  --accent: #0f766e;
+  --accent-soft: rgba(15, 118, 110, 0.12);
+  --accent-strong: #115e59;
+  --danger: #be123c;
+  --danger-soft: rgba(190, 18, 60, 0.1);
+  --warning-soft: #fff7ed;
+  padding: 24px;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 28%),
+    linear-gradient(180deg, #f5f7fb 0%, #eef2f9 100%);
+  color: var(--text-strong);
+  font-family: "Fira Sans", "Noto Sans SC", "PingFang SC", sans-serif;
 }
 
-.row {
+.console-hero {
   display: flex;
+  justify-content: space-between;
   gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent-strong);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.console-hero h1 {
+  margin: 0;
+  font-family: "Fira Code", "JetBrains Mono", monospace;
+  font-size: 32px;
+  line-height: 1.1;
+}
+
+.hero-copy {
+  max-width: 760px;
+  margin: 12px 0 0;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+
+.hero-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.summary-card,
+.console-panel {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
+}
+
+.summary-card {
+  display: flex;
+  gap: 14px;
+  padding: 18px;
+}
+
+.summary-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  flex-shrink: 0;
+}
+
+.summary-label {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.summary-card strong {
+  display: block;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.summary-meta {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-soft);
+}
+
+.console-nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 16px;
 }
 
-.row > .card {
-  flex: 1;
-  min-width: 0;
+.nav-chip,
+.action-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
 }
 
-.stat-row {
-  display: flex;
-  gap: 12px;
+.nav-chip {
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-base);
 }
 
-.stat-box {
-  flex: 1;
-  text-align: center;
-  padding: 14px 8px;
-  border-radius: 8px;
+.nav-chip:hover,
+.nav-chip:focus-visible {
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent-strong);
+  outline: none;
 }
 
-.stat-box.blue { background: #f0f7ff; }
-.stat-box.green { background: #f0f9eb; }
-.stat-box.purple { background: #f3f0ff; }
-.stat-box.orange { background: #fff8e6; }
-
-.stat-number {
-  font-size: 22px;
-  font-weight: bold;
+.nav-chip--active {
+  background: var(--accent);
+  color: #ffffff;
+  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.2);
 }
 
-.stat-box.blue .stat-number { color: #409eff; }
-.stat-box.green .stat-number { color: #67c23a; }
-.stat-box.purple .stat-number { color: #7c5cfc; }
-.stat-box.orange .stat-number { color: #e6a23c; }
-
-.stat-label {
-  font-size: 12px;
-  color: #999;
-  margin-top: 4px;
+.console-panel {
+  padding: 18px;
 }
 
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
+.action-button--ghost {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--text-base);
 }
 
-.data-table th,
-.data-table td {
-  padding: 8px 6px;
-  text-align: right;
-  border-bottom: 1px solid var(--k-color-divider, #eee);
+.action-button--ghost:hover,
+.action-button--ghost:focus-visible {
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--accent-strong);
+  outline: none;
 }
 
-.data-table th {
-  font-weight: 600;
-  color: #999;
-  font-size: 12px;
+@media (max-width: 1180px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-.result-box {
-  margin-top: 16px;
-  padding: 12px;
-  background: var(--k-color-active, #f5f5f5);
-  border-radius: 6px;
-}
+@media (max-width: 820px) {
+  .mio-console {
+    padding: 16px;
+  }
 
-.result-box.warning {
-  background: #fff3cd;
-}
-
-.result-box pre {
-  white-space: pre-wrap;
-  margin: 8px 0 0;
-  font-size: 13px;
-}
-
-.result-box h3 {
-  margin: 0;
-  font-size: 14px;
-}
-
-@media (max-width: 768px) {
-  .row {
+  .console-hero {
     flex-direction: column;
+  }
+
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-chip,
+  .action-button {
+    transition: none;
   }
 }
 </style>
