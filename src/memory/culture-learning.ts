@@ -1,43 +1,44 @@
 import { Context } from 'koishi'
-import { ExtractionCulturalObservation, CulturalObservationType } from './types'
+import { ExtractionCulturalObservation, CulturalObservationType, CultureEvidenceKind } from './types'
 import { EmbeddingService, cosineSimilarity } from './embedding'
 
-const TYPE_TO_FACT_TYPE: Record<CulturalObservationType, string> = {
+const TYPE_TO_KIND: Record<CulturalObservationType, CultureEvidenceKind> = {
   expression: 'group_expression',
   reaction_pattern: 'reaction_pattern',
   tool_knowledge: 'tool_knowledge',
   meme: 'inside_joke',
 }
 
-const DEDUP_THRESHOLD = 0.85
-const MAX_CONFIDENCE = 0.8
+const DEDUP_THRESHOLD = 0.95
+const MAX_CONFIDENCE = 0.9
 const CONFIDENCE_BUMP = 0.1
 
 /**
- * 处理文化观察：直达 semantic 写入（类似 name-learning.ts 模式）
+ * 处理文化观察：写入 evidence 层，保留轻量同窗去重
  * - 为每条观察生成 embedding
- * - 与已有 group facts 去重（cosine >= 0.85）
- *   - 重复：bump confidence +0.1（cap 0.8）
- *   - 新增：写入 mio.semantic，初始 confidence 来自提取
+ * - 仅在传入的同一批次/时间窗 key 内做轻量去重
+ * - meme 统一归一化为 inside_joke
  */
 export async function processCulturalObservations(
   ctx: Context,
   groupId: string,
   observations: ExtractionCulturalObservation[],
   embeddingService: EmbeddingService,
+  sourceWindowKey: string,
 ): Promise<string[]> {
   if (observations.length === 0) return []
 
   const logger = ctx.logger('mio.culture')
   const summaries: string[] = []
+  const now = Date.now()
 
-  // 加载所有已有的 group facts
-  const existingFacts = await ctx.database.get('mio.semantic', {
+  // 仅加载同窗内已有 evidence，避免同一次批次反复写入
+  const existingEvidence = await ctx.database.get('mio.culture_evidence', {
     groupId,
-    subject: 'group',
+    sourceWindowKey,
   })
-  const activeFacts = existingFacts.filter(
-    f => f.supersededBy === null || f.supersededBy === undefined,
+  const windowEvidence = existingEvidence.filter(
+    e => e.status === 'active' || e.status === 'promoted' || e.status === undefined,
   )
 
   // 批量生成 embedding
@@ -50,52 +51,69 @@ export async function processCulturalObservations(
     return []
   }
 
-  const now = Date.now()
-
   for (let i = 0; i < observations.length; i++) {
     const obs = observations[i]
     const embedding = embeddings[i]
-    const factType = TYPE_TO_FACT_TYPE[obs.type]
+    const kind = TYPE_TO_KIND[obs.type]
+    const content = obs.content.trim()
 
-    // 与已有 facts 去重
+    // 轻量同窗去重：同 kind + 高相似 / 同文本，只合并到 evidence 层
     let matched = false
-    for (const fact of activeFacts) {
-      if (fact.embedding && fact.embedding.length > 0) {
-        const similarity = cosineSimilarity(embedding, fact.embedding)
+    for (const evidence of windowEvidence) {
+      if (evidence.kind !== kind) continue
+
+      if (evidence.content === content) {
+        const newConfidence = Math.min(MAX_CONFIDENCE, evidence.confidence + CONFIDENCE_BUMP)
+        await ctx.database.set('mio.culture_evidence', { id: evidence.id }, {
+          confidence: newConfidence,
+          lastSeenAt: now,
+        })
+        logger.debug(`文化证据去重合并(同窗同文): "${content}" → evidence#${evidence.id}`)
+        summaries.push(`合并: ${content} (${newConfidence.toFixed(2)})`)
+        evidence.confidence = newConfidence
+        evidence.lastSeenAt = now
+        matched = true
+        break
+      }
+
+      if (evidence.embedding && evidence.embedding.length > 0) {
+        const similarity = cosineSimilarity(embedding, evidence.embedding)
         if (similarity >= DEDUP_THRESHOLD) {
-          // 重复：bump confidence
-          const newConfidence = Math.min(MAX_CONFIDENCE, fact.confidence + CONFIDENCE_BUMP)
-          await ctx.database.set('mio.semantic', { id: fact.id }, {
+          const newConfidence = Math.min(MAX_CONFIDENCE, evidence.confidence + CONFIDENCE_BUMP)
+          await ctx.database.set('mio.culture_evidence', { id: evidence.id }, {
             confidence: newConfidence,
-            lastConfirmed: now,
+            lastSeenAt: now,
           })
-          logger.debug(`文化观察去重合并: "${obs.content}" → fact#${fact.id} (${fact.confidence.toFixed(2)} → ${newConfidence.toFixed(2)})`)
-          summaries.push(`合并: ${obs.content} (${newConfidence.toFixed(2)})`)
+          logger.debug(
+            `文化证据去重合并: "${content}" → evidence#${evidence.id} (${evidence.confidence.toFixed(2)} → ${newConfidence.toFixed(2)})`,
+          )
+          summaries.push(`合并: ${content} (${newConfidence.toFixed(2)})`)
+          evidence.confidence = newConfidence
+          evidence.lastSeenAt = now
           matched = true
-          // 更新内存中的 confidence 以避免后续重复 bump
-          fact.confidence = newConfidence
           break
         }
       }
     }
 
     if (!matched) {
-      // 新增 fact
-      await ctx.database.create('mio.semantic', {
+      const created = await ctx.database.create('mio.culture_evidence', {
         groupId,
-        subject: 'group',
-        factType,
-        content: obs.content,
+        kind,
+        content,
         embedding,
         confidence: obs.confidence,
-        sourceEpisodes: [],
-        firstObserved: now,
-        lastConfirmed: now,
-        supersededBy: null,
+        sourceEpisodeId: null,
+        sourceWindowKey,
+        observedAt: now,
+        lastSeenAt: now,
+        status: 'active',
+        clusterId: null,
         createdAt: now,
       })
-      logger.debug(`新文化观察写入: [${obs.type}] "${obs.content}" (confidence=${obs.confidence.toFixed(2)})`)
-      summaries.push(`新增: ${obs.content} (${obs.confidence.toFixed(2)})`)
+      windowEvidence.push(created)
+      logger.debug(`新文化证据写入: [${obs.type}] "${content}" (confidence=${obs.confidence.toFixed(2)})`)
+      summaries.push(`新增: ${content} (${obs.confidence.toFixed(2)})`)
     }
   }
 

@@ -59,6 +59,45 @@ export interface ExtractionCulturalObservation {
   confidence: number
 }
 
+export type CultureEvidenceKind = 'group_expression' | 'reaction_pattern' | 'tool_knowledge' | 'inside_joke'
+
+export type CultureEvidenceStatus = 'active' | 'promoted' | 'ignored'
+
+export interface CultureEvidenceRow {
+  id: number
+  groupId: string
+  kind: CultureEvidenceKind
+  content: string
+  embedding: number[]
+  confidence: number
+  sourceEpisodeId: number | null
+  sourceWindowKey: string
+  observedAt: number
+  lastSeenAt: number
+  status: CultureEvidenceStatus
+  clusterId: string | null
+  createdAt: number
+}
+
+export type CultureEvidenceBucketMap = Record<CultureEvidenceKind, CultureEvidenceRow[]>
+
+export interface CultureEvidenceSupport {
+  count: number
+  distinctDays: number
+  distinctWindows: number
+  averageConfidence: number
+  recencyDays: number
+  effectiveCount: number
+  score: number
+}
+
+export interface CultureEvidenceCluster {
+  kind: CultureEvidenceKind
+  evidence: CultureEvidenceRow[]
+  centroid: number[]
+  support: CultureEvidenceSupport
+}
+
 // ===== Semantic Fact (Phase 3b) =====
 
 export interface SemanticFact {

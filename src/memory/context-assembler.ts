@@ -3,7 +3,7 @@ import { MemoryContext, ClosenessTier } from "./types";
 import { RetrievedMemory } from "./episodic";
 import { WorkingMemory } from "./working-memory";
 import { MioSemanticRow } from "./tables";
-import { EmbeddingService } from "./embedding";
+import { EmbeddingService, cosineSimilarity } from "./embedding";
 
 const CLOSENESS_LABELS: Record<ClosenessTier, string> = {
   stranger: "不太熟",
@@ -11,6 +11,93 @@ const CLOSENESS_LABELS: Record<ClosenessTier, string> = {
   familiar: "挺熟的",
   close: "老聊友了",
 };
+const GROUP_CULTURE_FACT_TYPES = new Set([
+  "group_expression",
+  "reaction_pattern",
+  "tool_knowledge",
+  "inside_joke",
+]);
+const GROUP_CULTURE_KIND_CAPS: Record<string, number> = {
+  group_expression: 4,
+  reaction_pattern: 4,
+  tool_knowledge: 3,
+  inside_joke: 4,
+};
+const GROUP_CULTURE_MAX_ITEMS = 15;
+const GROUP_CULTURE_MIN_CONFIDENCE = 0.4;
+const GROUP_CULTURE_DEDUP_SIMILARITY = 0.9;
+const GROUP_CULTURE_TEXT_DEDUP_SIMILARITY = 0.5;
+const GROUP_CULTURE_RECENCY_WEIGHT = 0.2;
+
+function normalizeCultureContent(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, "")
+    .replace(/[，。！？、,.!?:"'`~\-/\\()[\]{}]/g, "");
+}
+
+function computeCultureTextSimilarity(a: string, b: string): number {
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.length < 2 || b.length < 2) return 0;
+
+  const makeBigrams = (text: string): string[] => {
+    const grams: string[] = [];
+    for (let i = 0; i < text.length - 1; i++) {
+      grams.push(text.slice(i, i + 2));
+    }
+    return grams;
+  };
+
+  const aBigrams = makeBigrams(a);
+  const bBigrams = makeBigrams(b);
+  if (aBigrams.length === 0 || bBigrams.length === 0) return 0;
+
+  const counts = new Map<string, number>();
+  for (const gram of aBigrams) {
+    counts.set(gram, (counts.get(gram) || 0) + 1);
+  }
+
+  let overlap = 0;
+  for (const gram of bBigrams) {
+    const count = counts.get(gram) || 0;
+    if (count <= 0) continue;
+    overlap++;
+    counts.set(gram, count - 1);
+  }
+
+  return (2 * overlap) / (aBigrams.length + bBigrams.length);
+}
+
+function isCanonicalGroupCultureFact(fact: MioSemanticRow): boolean {
+  return GROUP_CULTURE_FACT_TYPES.has(fact.factType);
+}
+
+function computeGroupCultureRecencyScore(lastConfirmed: number): number {
+  const daysSinceConfirmed = Math.max(0, (Date.now() - lastConfirmed) / 86400_000);
+  return 1 / (1 + daysSinceConfirmed);
+}
+
+function computeGroupCultureScore(fact: MioSemanticRow): number {
+  return fact.confidence + computeGroupCultureRecencyScore(fact.lastConfirmed) * GROUP_CULTURE_RECENCY_WEIGHT;
+}
+
+function areGroupCultureFactsSimilar(a: MioSemanticRow, b: MioSemanticRow): boolean {
+  if (a.factType !== b.factType) return false;
+  const normalizedA = normalizeCultureContent(a.content);
+  const normalizedB = normalizeCultureContent(b.content);
+  if (normalizedA === normalizedB) return true;
+
+  const textSimilarity = computeCultureTextSimilarity(normalizedA, normalizedB);
+  if (a.embedding.length > 0 && a.embedding.length === b.embedding.length) {
+    return (
+      cosineSimilarity(a.embedding, b.embedding) >= GROUP_CULTURE_DEDUP_SIMILARITY &&
+      textSimilarity >= GROUP_CULTURE_TEXT_DEDUP_SIMILARITY
+    );
+  }
+
+  return textSimilarity >= GROUP_CULTURE_TEXT_DEDUP_SIMILARITY;
+}
 
 function formatTimeAgo(eventTime: number): string {
   const hours = (Date.now() - eventTime) / 3600_000;
@@ -192,7 +279,7 @@ export class ContextAssembler {
 
   /**
    * 加载所有 subject="group" 的 active facts，always-inject 群文化上下文
-   * confidence >= 0.4，按 confidence 降序，最多 15 条
+   * 只注入 canonical 群文化事实，做轻量去重和 per-kind caps
    */
   private async buildGroupCulture(groupId: string): Promise<string> {
     const allFacts = await this.ctx.database.get('mio.semantic', {
@@ -203,16 +290,35 @@ export class ContextAssembler {
     const activeFacts = allFacts.filter(
       (f) =>
         (f.supersededBy === null || f.supersededBy === undefined) &&
-        f.confidence >= 0.4,
+        f.confidence >= GROUP_CULTURE_MIN_CONFIDENCE &&
+        isCanonicalGroupCultureFact(f),
     );
 
     if (activeFacts.length === 0) return '';
 
-    const top = activeFacts
-      .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, 15);
+    const selected: MioSemanticRow[] = [];
+    const countsByKind = new Map<string, number>();
+    const rankedFacts = [...activeFacts].sort((a, b) => {
+      const scoreDelta = computeGroupCultureScore(b) - computeGroupCultureScore(a);
+      if (scoreDelta !== 0) return scoreDelta;
+      if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      if (b.lastConfirmed !== a.lastConfirmed) return b.lastConfirmed - a.lastConfirmed;
+      return b.id - a.id;
+    });
 
-    return top.map((f) => `- ${f.content}`).join('\n');
+    for (const fact of rankedFacts) {
+      const currentCount = countsByKind.get(fact.factType) || 0;
+      const kindCap = GROUP_CULTURE_KIND_CAPS[fact.factType] || GROUP_CULTURE_MAX_ITEMS;
+      if (currentCount >= kindCap) continue;
+      if (selected.some((existing) => areGroupCultureFactsSimilar(existing, fact))) continue;
+
+      selected.push(fact);
+      countsByKind.set(fact.factType, currentCount + 1);
+
+      if (selected.length >= GROUP_CULTURE_MAX_ITEMS) break;
+    }
+
+    return selected.map((f) => `- ${f.content}`).join('\n');
   }
 
   private buildMemoriesText(memories: RetrievedMemory[]): string {

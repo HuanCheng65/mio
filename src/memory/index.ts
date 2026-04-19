@@ -30,6 +30,16 @@ export interface RecordSummary {
   culturalSummaries: string[]
 }
 
+function buildCultureSourceWindowKey(groupId: string, recentMessages: NormalizedMessage[]): string {
+  if (recentMessages.length === 0) {
+    return `${groupId}:empty:0`
+  }
+
+  const firstTimestamp = recentMessages[0].timestamp
+  const lastTimestamp = recentMessages[recentMessages.length - 1].timestamp
+  return `${groupId}:${firstTimestamp}-${lastTimestamp}:${recentMessages.length}`
+}
+
 export class MemoryService {
   private embeddingService: EmbeddingService
   private workingMemory: WorkingMemory
@@ -156,12 +166,17 @@ export class MemoryService {
         }
       }
 
-      // 文化观察 → 直达 semantic 写入（不经过 working memory）
+      // 文化观察 → 写入 evidence 层（不经过 working memory）
       let culturalSummaries: string[] = []
       if (result.culturalObservations.length > 0) {
         try {
+          const sourceWindowKey = buildCultureSourceWindowKey(params.groupId, params.recentMessages)
           culturalSummaries = await processCulturalObservations(
-            this.ctx, params.groupId, result.culturalObservations, this.embeddingService,
+            this.ctx,
+            params.groupId,
+            result.culturalObservations,
+            this.embeddingService,
+            sourceWindowKey,
           )
         } catch (err) {
           logger.warn('文化观察处理失败:', err)

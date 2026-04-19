@@ -1,11 +1,76 @@
 import { Context } from "koishi";
 import { LLMClient } from "../llm/client";
-import { MemoryConfig, DistillationResult } from "./types";
+import {
+  CultureEvidenceBucketMap,
+  CultureEvidenceCluster,
+  CultureEvidenceKind,
+  CultureEvidenceRow,
+  CultureEvidenceSupport,
+  DistillationResult,
+  MemoryConfig,
+} from "./types";
 import { MioEpisodicRow, MioRelationalRow, MioSemanticRow } from "./tables";
 import { getPromptManager } from "./prompt-manager";
 import { EmbeddingService, cosineSimilarity } from "./embedding";
 
 const promptManager = getPromptManager();
+const CULTURE_EVIDENCE_DAY_MS = 86400_000;
+const CULTURE_EVIDENCE_RECENT_WINDOW_MS = 30 * CULTURE_EVIDENCE_DAY_MS;
+const CULTURE_EVIDENCE_CLUSTER_SIMILARITY = 0.92;
+const CULTURE_EVIDENCE_PROMOTION_MIN_WINDOWS = 2;
+const CULTURE_EVIDENCE_ACTIVE_FACT_LIMIT = 15;
+const CULTURE_EVIDENCE_PROMOTABLE_CLUSTER_LIMIT = 8;
+const CULTURE_CANDIDATE_RECENT_WINDOW_MS = 30 * CULTURE_EVIDENCE_DAY_MS;
+const CULTURE_EVIDENCE_KINDS: CultureEvidenceKind[] = [
+  "group_expression",
+  "reaction_pattern",
+  "tool_knowledge",
+  "inside_joke",
+];
+const GROUP_CULTURE_FACT_TYPES = new Set<MioSemanticRow["factType"]>([
+  "group_expression",
+  "reaction_pattern",
+  "tool_knowledge",
+  "inside_joke",
+]);
+
+interface GroupCultureClusterSummary {
+  clusterIndex: number;
+  clusterId: string;
+  kind: CultureEvidenceKind;
+  support: CultureEvidenceSupport;
+  representative: string;
+  evidenceLines: string[];
+  evidence: CultureEvidenceRow[];
+}
+
+interface GroupCultureCanonicalizationPromptResult {
+  promoted_facts?: Array<{
+    cluster_index: number;
+    fact_type?: string;
+    content: string;
+    confidence?: number;
+  }>;
+  merged_facts?: Array<{
+    id: number;
+    new_content: string;
+    new_confidence?: number;
+  }>;
+  confirmed_facts?: Array<{
+    id: number;
+    new_confidence?: number;
+  }>;
+  decayed_facts?: Array<{
+    id: number;
+    new_confidence?: number;
+  }>;
+}
+
+interface GroupCultureFactPatchState {
+  merged?: Partial<MioSemanticRow>;
+  confirmed?: Partial<MioSemanticRow>;
+  decayed?: Partial<MioSemanticRow>;
+}
 
 // ===== Helpers =====
 
@@ -39,6 +104,539 @@ function parseJSON(text: string): any | null {
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function clampConfidence(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function isGroupFactType(value: unknown): value is MioSemanticRow["factType"] {
+  return typeof value === "string" && GROUP_CULTURE_FACT_TYPES.has(value as MioSemanticRow["factType"]);
+}
+
+function normalizeGroupFactType(
+  value: unknown,
+  fallback: CultureEvidenceKind,
+): MioSemanticRow["factType"] {
+  return isGroupFactType(value) ? value : fallback;
+}
+
+function formatCultureEvidenceSummary(row: CultureEvidenceRow): string {
+  const date = new Date(getCultureActivityAt(row)).toLocaleDateString("zh-CN");
+  return `${date} ${row.content} (confidence=${row.confidence.toFixed(2)})`;
+}
+
+function formatGroupCultureClusters(clusters: GroupCultureClusterSummary[]): string {
+  if (clusters.length === 0) {
+    return "（暂无可归纳的群文化簇）";
+  }
+
+  return clusters
+    .map((cluster) => {
+      const evidence = cluster.evidenceLines.map((line) => `  - ${line}`).join("\n");
+      return [
+        `[cluster=${cluster.clusterIndex} kind=${cluster.kind} score=${cluster.support.score.toFixed(2)} windows=${cluster.support.distinctWindows} count=${cluster.support.count}]`,
+        `代表：${cluster.representative}`,
+        evidence,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .join("\n\n");
+}
+
+function isActiveSemanticFact(fact: MioSemanticRow): boolean {
+  return fact.supersededBy === null || fact.supersededBy === undefined;
+}
+
+function getCultureActivityAt(row: Pick<CultureEvidenceRow, "observedAt" | "lastSeenAt">): number {
+  return Math.max(row.observedAt, row.lastSeenAt);
+}
+
+function getCultureDayKey(timestamp: number): number {
+  return Math.floor(timestamp / CULTURE_EVIDENCE_DAY_MS);
+}
+
+function getEmbeddingDimension(embedding: number[]): number | null {
+  return embedding.length > 0 ? embedding.length : null;
+}
+
+function averageEmbedding(vectors: number[][], dimension: number): number[] {
+  if (vectors.length === 0) return [];
+  const sums = new Array(dimension).fill(0);
+  for (const vector of vectors) {
+    for (let i = 0; i < dimension; i++) {
+      sums[i] += vector[i];
+    }
+  }
+
+  return sums.map((value) => value / vectors.length);
+}
+
+function inferSupportNow(rows: CultureEvidenceRow[]): number {
+  if (rows.length === 0) return Date.now();
+  return rows.reduce((latest, row) => Math.max(latest, getCultureActivityAt(row)), 0);
+}
+
+function sortCultureClusters(clusters: CultureEvidenceCluster[]): CultureEvidenceCluster[] {
+  return clusters.sort((a, b) => {
+    const aAt = a.evidence.length > 0 ? getCultureActivityAt(a.evidence[0]) : 0;
+    const bAt = b.evidence.length > 0 ? getCultureActivityAt(b.evidence[0]) : 0;
+    if (aAt !== bAt) return aAt - bAt;
+    if (a.kind !== b.kind) return a.kind.localeCompare(b.kind);
+    const aId = a.evidence.length > 0 ? a.evidence[0].id : 0;
+    const bId = b.evidence.length > 0 ? b.evidence[0].id : 0;
+    return aId - bId;
+  });
+}
+
+interface CultureEvidenceWindowAggregate {
+  sourceWindowKey: string;
+  rows: CultureEvidenceRow[];
+  representative: CultureEvidenceRow;
+}
+
+function selectWindowRepresentative(rows: CultureEvidenceRow[]): CultureEvidenceRow {
+  return [...rows].sort((a, b) => {
+    const aAt = getCultureActivityAt(a);
+    const bAt = getCultureActivityAt(b);
+    if (aAt !== bAt) return bAt - aAt;
+    if (a.confidence !== b.confidence) return b.confidence - a.confidence;
+    return a.id - b.id;
+  })[0];
+}
+
+function groupCultureEvidenceByWindow(
+  rows: CultureEvidenceRow[],
+): CultureEvidenceWindowAggregate[] {
+  const windows = new Map<string, CultureEvidenceRow[]>();
+  for (const row of rows) {
+    const key = row.sourceWindowKey || `row:${row.id}`;
+    const bucket = windows.get(key);
+    if (bucket) {
+      bucket.push(row);
+      continue;
+    }
+    windows.set(key, [row]);
+  }
+
+  return [...windows.entries()]
+    .map(([sourceWindowKey, windowRows]) => ({
+      sourceWindowKey,
+      rows: windowRows,
+      representative: selectWindowRepresentative(windowRows),
+    }))
+    .sort((a, b) => {
+      const aAt = getCultureActivityAt(a.representative);
+      const bAt = getCultureActivityAt(b.representative);
+      if (aAt !== bAt) return aAt - bAt;
+      if (a.sourceWindowKey !== b.sourceWindowKey) {
+        return a.sourceWindowKey.localeCompare(b.sourceWindowKey);
+      }
+      return a.representative.id - b.representative.id;
+    });
+}
+
+function filterValidCultureEvidenceWindows(
+  windows: CultureEvidenceWindowAggregate[],
+): CultureEvidenceWindowAggregate[] {
+  const valid: CultureEvidenceWindowAggregate[] = [];
+
+  for (const window of windows) {
+    const orderedRows = [...window.rows].sort((a, b) => {
+      const aAt = getCultureActivityAt(a);
+      const bAt = getCultureActivityAt(b);
+      if (aAt !== bAt) return bAt - aAt;
+      if (a.confidence !== b.confidence) return b.confidence - a.confidence;
+      return a.id - b.id;
+    });
+
+    const dimensionCounts = new Map<number, number>();
+    for (const row of orderedRows) {
+      const dimension = getEmbeddingDimension(row.embedding);
+      if (dimension === null) continue;
+      dimensionCounts.set(dimension, (dimensionCounts.get(dimension) || 0) + 1);
+    }
+
+    if (dimensionCounts.size === 0) continue;
+
+    let dimension: number | null = null;
+    let maxCount = -1;
+    for (const row of orderedRows) {
+      const candidate = getEmbeddingDimension(row.embedding);
+      if (candidate === null) continue;
+      const count = dimensionCounts.get(candidate) || 0;
+      if (count > maxCount || (count === maxCount && (dimension === null || candidate > dimension))) {
+        dimension = candidate;
+        maxCount = count;
+      }
+    }
+
+    if (dimension === null) continue;
+
+    const validRows = window.rows.filter((row) => row.embedding.length === dimension);
+    if (validRows.length === 0) continue;
+
+    valid.push({
+      sourceWindowKey: window.sourceWindowKey,
+      rows: validRows,
+      representative: selectWindowRepresentative(validRows),
+    });
+  }
+
+  return valid;
+}
+
+function buildCultureEvidenceAdjacency(
+  windows: CultureEvidenceWindowAggregate[],
+  similarityThreshold: number,
+): number[][] {
+  const adjacency = windows.map(() => new Array(windows.length).fill(0));
+
+  for (let i = 0; i < windows.length; i++) {
+    adjacency[i][i] = 1;
+    for (let j = i + 1; j < windows.length; j++) {
+      const similarity = cosineSimilarity(
+        windows[i].representative.embedding,
+        windows[j].representative.embedding,
+      );
+      if (similarity >= similarityThreshold) {
+        adjacency[i][j] = 1;
+        adjacency[j][i] = 1;
+      }
+    }
+  }
+
+  return adjacency;
+}
+
+function collectConnectedComponents(adjacency: number[][]): number[][] {
+  const visited = new Array(adjacency.length).fill(false);
+  const components: number[][] = [];
+
+  for (let i = 0; i < adjacency.length; i++) {
+    if (visited[i]) continue;
+
+    const component: number[] = [];
+    const stack = [i];
+    visited[i] = true;
+
+    while (stack.length > 0) {
+      const current = stack.pop()!;
+      component.push(current);
+
+      for (let next = 0; next < adjacency[current].length; next++) {
+        if (adjacency[current][next] !== 1 || visited[next]) continue;
+        visited[next] = true;
+        stack.push(next);
+      }
+    }
+
+    component.sort((a, b) => a - b);
+    components.push(component);
+  }
+
+  return components.sort((a, b) => a[0] - b[0]);
+}
+
+export async function loadRecentCultureEvidence(
+  ctx: Context,
+  groupId: string,
+  since = Date.now() - CULTURE_EVIDENCE_RECENT_WINDOW_MS,
+): Promise<CultureEvidenceRow[]> {
+  const evidence = (await ctx.database.get("mio.culture_evidence", {
+    groupId,
+  })) as CultureEvidenceRow[];
+
+  return evidence
+    .filter(
+      (row) =>
+        row.groupId === groupId &&
+        row.status === "active" &&
+        getCultureActivityAt(row) >= since,
+    )
+    .sort((a, b) => {
+      const aAt = getCultureActivityAt(a);
+      const bAt = getCultureActivityAt(b);
+      if (aAt !== bAt) return aAt - bAt;
+      return a.id - b.id;
+    });
+}
+
+export async function collectGroupCultureCandidateGroupIds(
+  ctx: Context,
+): Promise<string[]> {
+  const [relational, episodic, semantic, cultureEvidence] = await Promise.all([
+    ctx.database.get("mio.relational", {}),
+    ctx.database.get("mio.episodic", {}),
+    ctx.database.get("mio.semantic", { subject: "group" }),
+    ctx.database.get("mio.culture_evidence", {}),
+  ]);
+
+  const groupIds = new Set<string>();
+  const recentCutoff = Date.now() - CULTURE_CANDIDATE_RECENT_WINDOW_MS;
+
+  for (const row of relational as MioRelationalRow[]) {
+    if (row.groupId && row.lastInteraction >= recentCutoff) groupIds.add(row.groupId);
+  }
+  for (const row of episodic as MioEpisodicRow[]) {
+    if (row.groupId && !row.archived && row.eventTime >= recentCutoff) groupIds.add(row.groupId);
+  }
+  for (const row of semantic as MioSemanticRow[]) {
+    if (
+      row.groupId &&
+      row.subject === "group" &&
+      isActiveSemanticFact(row) &&
+      row.lastConfirmed >= recentCutoff
+    ) {
+      groupIds.add(row.groupId);
+    }
+  }
+  for (const row of cultureEvidence as CultureEvidenceRow[]) {
+    if (
+      row.groupId &&
+      row.status === "active" &&
+      getCultureActivityAt(row) >= recentCutoff
+    ) {
+      groupIds.add(row.groupId);
+    }
+  }
+
+  return [...groupIds].sort((a, b) => a.localeCompare(b));
+}
+
+export function bucketCultureEvidenceByKind(
+  rows: CultureEvidenceRow[],
+): CultureEvidenceBucketMap {
+  return rows.reduce<CultureEvidenceBucketMap>(
+    (buckets, row) => {
+      buckets[row.kind].push(row);
+      return buckets;
+    },
+    {
+      group_expression: [],
+      reaction_pattern: [],
+      tool_knowledge: [],
+      inside_joke: [],
+    },
+  );
+}
+
+export function computeCultureEvidenceSupport(
+  rows: CultureEvidenceRow[],
+  now = inferSupportNow(rows),
+): CultureEvidenceSupport {
+  if (rows.length === 0) {
+    return {
+      count: 0,
+      distinctDays: 0,
+      distinctWindows: 0,
+      averageConfidence: 0,
+      recencyDays: 0,
+      effectiveCount: 0,
+      score: 0,
+    };
+  }
+
+  const windowGroups = groupCultureEvidenceByWindow(rows);
+  const windowRepresentatives = windowGroups.map((window) => window.representative);
+  const count = windowGroups.length;
+  const distinctWindows = windowGroups.length;
+  const distinctDays = new Set(
+    windowRepresentatives.map((row) => getCultureDayKey(getCultureActivityAt(row))),
+  ).size;
+  const averageConfidence =
+    windowRepresentatives.reduce((sum, row) => sum + row.confidence, 0) /
+    windowRepresentatives.length;
+  const latestActivity = windowRepresentatives.reduce(
+    (latest, row) => Math.max(latest, getCultureActivityAt(row)),
+    0,
+  );
+  const recencyDays = Math.max(0, (now - latestActivity) / CULTURE_EVIDENCE_DAY_MS);
+  const effectiveCount = count;
+  const recencyScore = 1 / (1 + recencyDays);
+  const score =
+    effectiveCount +
+    distinctDays * 0.5 +
+    distinctWindows * 0.25 +
+    averageConfidence +
+    recencyScore;
+
+  return {
+    count,
+    distinctDays,
+    distinctWindows,
+    averageConfidence,
+    recencyDays,
+    effectiveCount,
+    score,
+  };
+}
+
+export function clusterCultureEvidenceBySimilarity(
+  rows: CultureEvidenceRow[],
+  similarityThreshold = CULTURE_EVIDENCE_CLUSTER_SIMILARITY,
+  now = inferSupportNow(rows),
+): CultureEvidenceCluster[] {
+  const clusters: CultureEvidenceCluster[] = [];
+
+  for (const kind of CULTURE_EVIDENCE_KINDS) {
+    const kindRows = rows.filter((row) => row.kind === kind);
+    if (kindRows.length === 0) continue;
+
+    const windowGroups = filterValidCultureEvidenceWindows(groupCultureEvidenceByWindow(kindRows));
+    if (windowGroups.length === 0) continue;
+
+    const adjacency = buildCultureEvidenceAdjacency(windowGroups, similarityThreshold);
+    const components = collectConnectedComponents(adjacency);
+
+    for (const component of components) {
+      const componentWindows = component.map((index) => windowGroups[index]);
+      const evidence = componentWindows
+        .flatMap((window) => window.rows)
+        .sort((a, b) => {
+          const aAt = getCultureActivityAt(a);
+          const bAt = getCultureActivityAt(b);
+          if (aAt !== bAt) return aAt - bAt;
+          if (a.sourceWindowKey !== b.sourceWindowKey) {
+            return a.sourceWindowKey.localeCompare(b.sourceWindowKey);
+          }
+          return a.id - b.id;
+        });
+
+      const representativeEmbeddings = componentWindows.map((window) => window.representative.embedding);
+      const centroidDimension = getEmbeddingDimension(representativeEmbeddings[0]) ?? 0;
+      const centroid = centroidDimension > 0
+        ? averageEmbedding(representativeEmbeddings, centroidDimension)
+        : [];
+
+      clusters.push({
+        kind,
+        evidence,
+        centroid,
+        support: computeCultureEvidenceSupport(evidence, now),
+      });
+    }
+  }
+
+  return sortCultureClusters(clusters);
+}
+
+function buildGroupCultureClusterSummaries(
+  clusters: CultureEvidenceCluster[],
+  limit = CULTURE_EVIDENCE_PROMOTABLE_CLUSTER_LIMIT,
+): GroupCultureClusterSummary[] {
+  return clusters
+    .filter(
+      (cluster) =>
+        cluster.support.distinctWindows >= CULTURE_EVIDENCE_PROMOTION_MIN_WINDOWS,
+    )
+    .sort((a, b) => {
+      if (b.support.score !== a.support.score) return b.support.score - a.support.score;
+      if (b.support.distinctWindows !== a.support.distinctWindows) {
+        return b.support.distinctWindows - a.support.distinctWindows;
+      }
+      return b.support.count - a.support.count;
+    })
+    .slice(0, limit)
+    .map((cluster, index) => ({
+      clusterIndex: index,
+      clusterId: `${cluster.kind}:${index}`,
+      kind: cluster.kind,
+      support: cluster.support,
+      representative: cluster.evidence.length > 0 ? cluster.evidence[0].content : "",
+      evidenceLines: cluster.evidence
+        .slice(0, 6)
+        .map((row) => formatCultureEvidenceSummary(row)),
+      evidence: cluster.evidence,
+    }));
+}
+
+function parseGroupCultureCanonicalizationResult(
+  content: string,
+): GroupCultureCanonicalizationPromptResult | null {
+  const raw = parseJSON(content);
+  if (!isPlainObject(raw)) return null;
+
+  const promotedFacts: GroupCultureCanonicalizationPromptResult["promoted_facts"] = [];
+  for (const item of Array.isArray(raw.promoted_facts) ? raw.promoted_facts : []) {
+    if (!isPlainObject(item)) continue;
+    const clusterIndex = readFiniteNumber(item.cluster_index);
+    const contentText = readString(item.content);
+    if (clusterIndex === null || contentText === null) continue;
+
+    const trimmed = contentText.trim();
+    if (!trimmed) continue;
+
+    const confidence = readFiniteNumber(item.confidence);
+    promotedFacts.push({
+      cluster_index: clusterIndex,
+      fact_type: readString(item.fact_type),
+      content: trimmed,
+      confidence: confidence === null ? undefined : clampConfidence(confidence),
+    });
+  }
+
+  const mergedFacts: GroupCultureCanonicalizationPromptResult["merged_facts"] = [];
+  for (const item of Array.isArray(raw.merged_facts) ? raw.merged_facts : []) {
+    if (!isPlainObject(item)) continue;
+    const id = readFiniteNumber(item.id);
+    const contentText = readString(item.new_content);
+    if (id === null || contentText === null) continue;
+
+    const trimmed = contentText.trim();
+    if (!trimmed) continue;
+
+    const confidence = readFiniteNumber(item.new_confidence);
+    mergedFacts.push({
+      id,
+      new_content: trimmed,
+      new_confidence: confidence === null ? undefined : clampConfidence(confidence),
+    });
+  }
+
+  const confirmedFacts: GroupCultureCanonicalizationPromptResult["confirmed_facts"] = [];
+  for (const item of Array.isArray(raw.confirmed_facts) ? raw.confirmed_facts : []) {
+    if (!isPlainObject(item)) continue;
+    const id = readFiniteNumber(item.id);
+    if (id === null) continue;
+    const confidence = readFiniteNumber(item.new_confidence);
+    confirmedFacts.push({
+      id,
+      new_confidence: confidence === null ? undefined : clampConfidence(confidence),
+    });
+  }
+
+  const decayedFacts: GroupCultureCanonicalizationPromptResult["decayed_facts"] = [];
+  for (const item of Array.isArray(raw.decayed_facts) ? raw.decayed_facts : []) {
+    if (!isPlainObject(item)) continue;
+    const id = readFiniteNumber(item.id);
+    if (id === null) continue;
+    const confidence = readFiniteNumber(item.new_confidence);
+    decayedFacts.push({
+      id,
+      new_confidence: confidence === null ? undefined : clampConfidence(confidence),
+    });
+  }
+
+  return {
+    promoted_facts: promotedFacts,
+    merged_facts: mergedFacts,
+    confirmed_facts: confirmedFacts,
+    decayed_facts: decayedFacts,
+  };
+}
+
 // ===== Main Pipeline =====
 
 export class DistillationPipeline {
@@ -63,6 +661,11 @@ export class DistillationPipeline {
 
       for (const groupId of groupIds) {
         await this.runForGroup(groupId);
+      }
+
+      const cultureGroupIds = await collectGroupCultureCandidateGroupIds(this.ctx);
+      for (const groupId of cultureGroupIds) {
+        await this.maintainGroupCulture(groupId);
       }
 
       // 全局清理
@@ -99,6 +702,222 @@ export class DistillationPipeline {
     }
 
     logger.info(`[${groupId}] 蒸馏完成`);
+  }
+
+  async maintainGroupCulture(groupId: string): Promise<void> {
+    const logger = this.ctx.logger("mio.distillation");
+    const [recentEvidence, existingFactsRaw] = await Promise.all([
+      loadRecentCultureEvidence(this.ctx, groupId),
+      this.ctx.database.get("mio.semantic", {
+        groupId,
+        subject: "group",
+      }),
+    ]);
+
+    const existingFacts = (existingFactsRaw as MioSemanticRow[]).filter(isActiveSemanticFact);
+    if (recentEvidence.length === 0 && existingFacts.length === 0) {
+      logger.debug(`[${groupId}] 无群文化证据，跳过`);
+      return;
+    }
+
+    const clusters = clusterCultureEvidenceBySimilarity(recentEvidence);
+    const clusterSummaries = buildGroupCultureClusterSummaries(clusters);
+    const prompt = promptManager.get("group_culture_canonicalize", {
+      existingFacts: formatFacts(existingFacts.slice().sort((a, b) => b.confidence - a.confidence).slice(0, CULTURE_EVIDENCE_ACTIVE_FACT_LIMIT)),
+      clusters: formatGroupCultureClusters(clusterSummaries),
+    });
+
+    const response = await this.llm.chat(
+      [
+        { role: "system", content: prompt },
+        { role: "user", content: "请归纳群文化并更新群文化事实。" },
+      ],
+      this.config.distillation,
+      {
+        temperature: 0.25,
+        maxTokens: 2048,
+        responseFormat: "json_object",
+        purpose: "memory-distillation-group-culture",
+      },
+    );
+
+    const result = parseGroupCultureCanonicalizationResult(response.content);
+    if (!result) {
+      logger.warn(`[${groupId}] 群文化 canonicalization LLM 输出解析失败`);
+      logger.debug(response.content);
+      return;
+    }
+
+    const now = Date.now();
+    const activeFacts = [...existingFacts];
+    const activeFactsById = new Map<number, MioSemanticRow>();
+    for (const fact of activeFacts) {
+      activeFactsById.set(fact.id, fact);
+    }
+
+    let promoted = 0;
+    let merged = 0;
+    let confirmed = 0;
+    let decayed = 0;
+    const pendingPatches = new Map<number, GroupCultureFactPatchState>();
+
+    const findSimilarFact = (factType: MioSemanticRow["factType"], embedding: number[]) => {
+      if (!this.embeddingService || embedding.length === 0) return null;
+      return activeFacts.find(
+        (fact) =>
+          fact.subject === "group" &&
+          fact.factType === factType &&
+          fact.embedding &&
+          fact.embedding.length === embedding.length &&
+          cosineSimilarity(embedding, fact.embedding) >= 0.9,
+      ) || null;
+    };
+
+    const embedContent = async (content: string): Promise<number[]> => {
+      if (!this.embeddingService || !content.trim()) return [];
+      try {
+        return await this.embeddingService.embed(content);
+      } catch (err) {
+        logger.warn(`[${groupId}] 群文化 embedding 失败:`, err);
+        return [];
+      }
+    };
+
+    const queuePatch = (
+      factId: number,
+      kind: "merged" | "confirmed" | "decayed",
+      patch: Partial<MioSemanticRow>,
+    ): void => {
+      const state = pendingPatches.get(factId) || {};
+      state[kind] = { ...state[kind], ...patch };
+      pendingPatches.set(factId, state);
+
+      const existing = activeFactsById.get(factId);
+      if (existing) {
+        Object.assign(existing, patch);
+      }
+    };
+
+    const resolvePatch = (state: GroupCultureFactPatchState): Partial<MioSemanticRow> | null => {
+      if (state.merged) return { ...state.merged };
+      if (state.confirmed) return { ...state.confirmed };
+      if (state.decayed) return { ...state.decayed };
+      return null;
+    };
+
+    for (const item of result.promoted_facts || []) {
+      const cluster = clusterSummaries[item.cluster_index];
+      if (!cluster) continue;
+
+      const factType = normalizeGroupFactType(item.fact_type, cluster.kind);
+      const content = item.content.slice(0, 80);
+      if (!content) continue;
+
+      const embedding = await embedContent(content);
+      const similar = findSimilarFact(factType, embedding);
+      const confidence = clampConfidence(item.confidence ?? cluster.support.averageConfidence);
+
+      if (similar) {
+        const patch: Partial<MioSemanticRow> = {
+          confidence: Math.max(similar.confidence, confidence),
+          lastConfirmed: now,
+        };
+        if (similar.content !== content) {
+          patch.content = content;
+        }
+        if (embedding.length > 0) {
+          patch.embedding = embedding;
+        }
+        queuePatch(similar.id, "merged", patch);
+        merged++;
+        continue;
+      }
+
+      const sourceEpisodes = Array.from(
+        new Set(
+          cluster.evidence
+            .map((row) => row.sourceEpisodeId)
+            .filter((value): value is number => typeof value === "number"),
+        ),
+      );
+
+      const created = await this.ctx.database.create("mio.semantic", {
+        groupId,
+        subject: "group",
+        factType,
+        content,
+        embedding,
+        confidence,
+        sourceEpisodes,
+        firstObserved: now,
+        lastConfirmed: now,
+        supersededBy: null,
+        createdAt: now,
+      });
+
+      activeFacts.push(created);
+      activeFactsById.set(created.id, created);
+      promoted++;
+    }
+
+    for (const item of result.merged_facts || []) {
+      const existing = activeFactsById.get(item.id);
+      if (!existing) continue;
+
+      const newContent = item.new_content.slice(0, 80);
+      const embedding = await embedContent(newContent);
+      const patch: Partial<MioSemanticRow> = {
+        content: newContent || existing.content,
+        confidence: clampConfidence(item.new_confidence ?? existing.confidence),
+        lastConfirmed: now,
+      };
+      if (embedding.length > 0) {
+        patch.embedding = embedding;
+      }
+      queuePatch(existing.id, "merged", patch);
+      merged++;
+    }
+
+    for (const item of result.confirmed_facts || []) {
+      const existing = activeFactsById.get(item.id);
+      if (!existing) continue;
+
+      queuePatch(existing.id, "confirmed", {
+        confidence: clampConfidence(item.new_confidence ?? existing.confidence),
+        lastConfirmed: now,
+      });
+      confirmed++;
+    }
+
+    for (const item of result.decayed_facts || []) {
+      const existing = activeFactsById.get(item.id);
+      if (!existing) continue;
+
+      queuePatch(existing.id, "decayed", {
+        confidence: clampConfidence(item.new_confidence ?? existing.confidence),
+      });
+      decayed++;
+    }
+
+    for (const [factId, state] of pendingPatches) {
+      const patch = resolvePatch(state);
+      if (!patch) continue;
+      const conflictKinds = [
+        state.merged ? "merged" : null,
+        state.confirmed ? "confirmed" : null,
+        state.decayed ? "decayed" : null,
+      ].filter((value): value is string => value !== null);
+      if (conflictKinds.length > 1) {
+        logger.debug(
+          `[${groupId}] 群文化 fact#${factId} 冲突指令: ${conflictKinds.join(" > ")}（按 merged > confirmed > decayed 解析）`,
+        );
+      }
+      await this.ctx.database.set("mio.semantic", { id: factId }, patch);
+    }
+
+    logger.info(
+      `[${groupId}] 群文化维护: +${promoted} 晋升, ${merged} 合并, ${confirmed} 确认, ${decayed} 衰减`,
+    );
   }
 
   /**

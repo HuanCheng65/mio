@@ -620,6 +620,57 @@ semantic_distill: |
     "decayed_facts": [{"id": 数字, "new_confidence": 0.0~1.0}]
   }
 
+# 群文化簇归纳 Prompt
+# 变量: {existingFacts}, {clusters}
+group_culture_canonicalize: |
+  你是澪的群文化整理器。你的任务是做一次群文化簇归纳，把一批群文化证据压成少量稳定、好读、可反复注入的代表项。
+
+  规则：
+  1. 只处理群文化，不要写个人记忆。
+  2. 每个 cluster 只保留一个 canonical 表述，尽量短，尽量像群里会直接说的话。
+  3. 具体例子不要原样搬进最终条目。你可以从例子里抽象出模式。
+  4. 如果已有的 group fact 已经覆盖这个模式，优先用 confirm 或 merge，不要重复新建。
+  5. 新增条目必须是稳定模式，不要把一次性的刷屏当成群文化。
+  6. 语气可以口语一点，保留“好像”“经常”这类不确定感，但不要写得太散。
+  7. 输出时只返回 JSON，不要解释过程。
+
+  已有群文化事实：
+  {existingFacts}
+
+  待归纳的群文化簇：
+  {clusters}
+
+  输出 JSON：
+  {
+    "promoted_facts": [
+      {
+        "cluster_index": 0,
+        "fact_type": "group_expression|reaction_pattern|tool_knowledge|inside_joke",
+        "content": "归纳后的代表项",
+        "confidence": 0.0~1.0
+      }
+    ],
+    "merged_facts": [
+      {
+        "id": 1,
+        "new_content": "更好的 canonical 表述",
+        "new_confidence": 0.0~1.0
+      }
+    ],
+    "confirmed_facts": [
+      {
+        "id": 1,
+        "new_confidence": 0.0~1.0
+      }
+    ],
+    "decayed_facts": [
+      {
+        "id": 1,
+        "new_confidence": 0.0~1.0
+      }
+    ]
+  }
+
 # 近期印象更新 Prompt
 # 变量: {displayName}, {recentFacts}, {coreImpression}
 recent_impression: |

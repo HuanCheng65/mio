@@ -1,7 +1,9 @@
 import { Context } from 'koishi'
+import type { CultureEvidenceRow } from './types'
 
 declare module 'koishi' {
   interface Tables {
+    'mio.culture_evidence': MioCultureEvidenceRow
     'mio.episodic': MioEpisodicRow
     'mio.relational': MioRelationalRow
     'mio.semantic': MioSemanticRow
@@ -9,6 +11,8 @@ declare module 'koishi' {
     'mio.token_usage': MioTokenUsageRow
   }
 }
+
+export type MioCultureEvidenceRow = CultureEvidenceRow
 
 export interface MioEpisodicRow {
   id: number
@@ -110,6 +114,25 @@ export function extendTables(ctx: Context) {
     mioInvolvement: { type: 'string', initial: 'observer' },
     eventTime: 'unsigned(8)',
     archived: { type: 'boolean', initial: false },
+    createdAt: 'unsigned(8)',
+  }, {
+    autoInc: true,
+    primary: 'id',
+  })
+
+  ctx.model.extend('mio.culture_evidence', {
+    id: 'unsigned',
+    groupId: 'string(63)',
+    kind: { type: 'string', initial: 'group_expression' },
+    content: { type: 'text', initial: '' },
+    embedding: { type: 'json', initial: [] },
+    confidence: { type: 'float', initial: 0.5 },
+    sourceEpisodeId: { type: 'unsigned', nullable: true, initial: null },
+    sourceWindowKey: { type: 'string', initial: '' },
+    observedAt: 'unsigned(8)',
+    lastSeenAt: 'unsigned(8)',
+    status: { type: 'string', initial: 'active' },
+    clusterId: { type: 'string', nullable: true, initial: null },
     createdAt: 'unsigned(8)',
   }, {
     autoInc: true,
