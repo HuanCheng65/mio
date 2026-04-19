@@ -53,20 +53,16 @@ export class PromptBuilder {
   buildStaticCore(options: StaticCoreOptions): PromptStaticCore {
     const parts: string[] = [];
 
-    parts.push("# 认知框架");
     parts.push(promptManager.getRaw("chat_system_layer0_cognitive"));
     parts.push("\n---\n");
-    parts.push("# 行为原则");
     parts.push(promptManager.getRaw("chat_system_layer1_behavior"));
     parts.push("\n---\n");
-    parts.push("# 输出格式");
     parts.push(
       promptManager.get("chat_system_layer2_format", {
         allowedReactEmojis: ALLOWED_REACT_EMOJI_TEXT,
       }),
     );
     parts.push("\n---\n");
-    parts.push("# 人设");
     parts.push(options.personaContent);
 
     const text = parts.join("\n");
@@ -149,11 +145,14 @@ export class PromptBuilder {
   /**
    * 构建 User Prompt（简化版，格式说明已移到 system）
    */
-  buildUserPrompt(recentBotCount: number): string {
+  buildUserPrompt(newMessageMarker: string, recentBotCount: number): string {
     const activity =
       recentBotCount > 0
         ? `（你最近 5 分钟内说了 ${recentBotCount} 条消息。）\n`
         : "";
-    return `${activity}最近群聊记录里带有 [新消息] 标记的部分就是刚刚发生的内容。看完了，输出 JSON。`;
+    return promptManager.get("chat_user_simple", {
+      newMessages: newMessageMarker,
+      recentBotActivity: activity,
+    });
   }
 }

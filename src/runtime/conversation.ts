@@ -33,6 +33,21 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
     stickerService,
   } = deps;
 
+  function buildNewMessageReference(
+    msgMap: Map<string, NormalizedMessage>,
+    newMessageIds: Set<string>,
+  ): string {
+    const newShortIds = [...msgMap.entries()]
+      .filter(([, message]) => newMessageIds.has(message.id))
+      .map(([shortId]) => shortId);
+
+    if (newShortIds.length === 0) {
+      return "见上文标记为 [新消息] 的消息。";
+    }
+
+    return `见上文标记为 [新消息] 的消息：${newShortIds.join("、")}`;
+  }
+
   async function triggerMemoryExtraction(groupId: string, reason: string): Promise<void> {
     if (!memory || !extractionScheduler) return;
     if (state.extractionLocks.get(groupId)) {
@@ -350,8 +365,6 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
 
       const currentStickerSummary = stickerService?.getSummary() || undefined;
       const systemPrompt = promptBuilder.buildSystemPrompt({
-        groupId,
-        userId: session.userId,
         recentMessages: recentMessagesFormatted,
         userProfile: memoryUserProfile,
         groupCulture: memoryGroupCulture,
@@ -517,10 +530,9 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
 
       const allMessages = buffer.getRecent(groupId);
       const { text: recentMessagesText, msgMap } = renderer.render(allMessages, newMessageIds);
+      const newMessageReference = buildNewMessageReference(msgMap, newMessageIds);
       const currentStickerSummary = stickerService?.getSummary() || undefined;
       const systemPrompt = promptBuilder.buildSystemPrompt({
-        groupId,
-        userId: session.userId,
         recentMessages: recentMessagesText,
         userProfile: memoryUserProfile,
         groupCulture: memoryGroupCulture,
@@ -530,7 +542,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
 
       const fiveMinAgo = Date.now() - 5 * 60_000;
       const recentBotCount = buffer.getRecent(groupId).filter((m) => m.isBot && m.timestamp > fiveMinAgo).length;
-      const userPrompt = promptBuilder.buildUserPrompt(recentBotCount);
+      const userPrompt = promptBuilder.buildUserPrompt(newMessageReference, recentBotCount);
 
       if (memoryUserProfile || memoryMemories || memoryGroupCulture || currentStickerSummary) {
         logger.debug(

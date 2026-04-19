@@ -80,8 +80,9 @@ export function apply(ctx: Context, config: MioConfig) {
   const personaService = new PersonaService(ctx, {
     defaultPersonaSeedFile: config.personaFile,
   });
-  void seedDefaultPersonaIfMissing(personaService).catch((error) => {
+  const personaSeedPromise = seedDefaultPersonaIfMissing(personaService).catch((error) => {
     logger.error("默认人设初始化失败:", error);
+    return null;
   });
   const promptBuilder = new PromptBuilder(config.personaFile);
   logger.info(`人设文件已加载: ${config.personaFile} (${promptBuilder.getPersonaLength()} chars, 首行: "${promptBuilder.getPersonaPreview()}")`);
@@ -200,6 +201,7 @@ export function apply(ctx: Context, config: MioConfig) {
   ctx.on("dispose", async () => {
     clearInterval(hourlyTimer);
     debouncer.dispose();
+    await Promise.allSettled([personaSeedPromise]);
 
     // Flush pending memory before shutdown
     if (memory && extractionScheduler) {

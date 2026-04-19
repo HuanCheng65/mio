@@ -62,3 +62,14 @@ test("PersonaService resolves bound personas and falls back to default", async (
   assert.equal(bound.name, "Alt");
   assert.equal(fallback.isDefault, true);
 });
+
+test("PersonaService lazily seeds the default persona during fallback resolution", async () => {
+  const service = new PersonaService(createFakeCtx(), {
+    defaultPersonaSeedFile: "mio.md",
+  });
+
+  const fallback = await service.resolveForGroup("999");
+
+  assert.equal(fallback.id, "default");
+  assert.equal(fallback.isDefault, true);
+});

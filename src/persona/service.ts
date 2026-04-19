@@ -26,6 +26,8 @@ function resolveSeedPath(seedFile: string) {
 }
 
 export class PersonaService {
+  private defaultPersonaSeedPromise: Promise<PersonaRecord> | null = null;
+
   constructor(
     private readonly ctx: Context,
     private readonly options: PersonaServiceOptions,
@@ -64,10 +66,10 @@ export class PersonaService {
 
   async getDefaultPersona(): Promise<PersonaRecord> {
     const rows = await this.ctx.database.get("mio.persona", { isDefault: true });
-    if (rows.length === 0) {
-      throw new Error("Default persona is not initialized");
+    if (rows.length > 0) {
+      return rows[0];
     }
-    return rows[0];
+    return this.seedDefaultPersonaIfMissing();
   }
 
   async resolveForGroup(groupId: string): Promise<PersonaRecord> {
@@ -83,25 +85,35 @@ export class PersonaService {
   }
 
   async seedDefaultPersonaIfMissing(): Promise<PersonaRecord> {
-    const existing = await this.ctx.database.get("mio.persona", { isDefault: true });
-    if (existing.length > 0) {
-      return existing[0];
+    if (!this.defaultPersonaSeedPromise) {
+      this.defaultPersonaSeedPromise = (async () => {
+        const existing = await this.ctx.database.get("mio.persona", { isDefault: true });
+        if (existing.length > 0) {
+          return existing[0];
+        }
+
+        const now = Date.now();
+        const content = readFileSync(resolveSeedPath(this.options.defaultPersonaSeedFile), "utf8");
+        const row: PersonaRecord = {
+          id: DEFAULT_PERSONA_ID,
+          name: "Default",
+          content,
+          contentHash: hashContent(content),
+          isDefault: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        await this.ctx.database.create("mio.persona", row);
+        return row;
+      })();
     }
 
-    const now = Date.now();
-    const content = readFileSync(resolveSeedPath(this.options.defaultPersonaSeedFile), "utf8");
-    const row: PersonaRecord = {
-      id: DEFAULT_PERSONA_ID,
-      name: "Default",
-      content,
-      contentHash: hashContent(content),
-      isDefault: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await this.ctx.database.create("mio.persona", row);
-    return row;
+    try {
+      return await this.defaultPersonaSeedPromise;
+    } finally {
+      this.defaultPersonaSeedPromise = null;
+    }
   }
 }
 
