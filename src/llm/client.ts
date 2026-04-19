@@ -19,6 +19,7 @@ export interface ChatOptions {
   signal?: AbortSignal; // 支持取消请求
   responseFormat?: "text" | "json_object"; // JSON mode 支持
   purpose?: string; // Token 用量用途标签
+  cachedContent?: string;
 }
 
 export class LLMClient {
@@ -54,6 +55,7 @@ export class LLMClient {
           maxTokens,
           signal,
           responseFormat,
+          options,
         )
       : await this.chatOpenAI(
           messages,
@@ -140,6 +142,7 @@ export class LLMClient {
     maxTokens: number,
     signal?: AbortSignal,
     responseFormat: "text" | "json_object" = "text",
+    options?: ChatOptions,
   ): Promise<LLMResponse> {
     const provider = this.providerManager.getGeminiProvider(
       modelConfig.providerId,
@@ -167,6 +170,10 @@ export class LLMClient {
     // 添加 JSON mode 支持（Gemini 使用 responseMimeType）
     if (responseFormat === "json_object") {
       config.responseMimeType = "application/json";
+    }
+
+    if (options?.cachedContent) {
+      config.cachedContent = options.cachedContent;
     }
 
     // 添加 AbortSignal 支持

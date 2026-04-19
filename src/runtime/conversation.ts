@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { createHash } from "node:crypto";
 import { Session, h } from "koishi";
 import type { OneBotBot } from "@wittf/koishi-plugin-adapter-onebot";
 import { humanizedSend, resolveAtMentions, UserInfo } from "../delivery/humanize";
@@ -31,7 +32,47 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
     searchService,
     shadowLogger,
     stickerService,
+    personaService,
+    geminiCacheManager,
   } = deps;
+
+  async function resolvePersonaAndCache(groupId: string): Promise<{
+    personaContent?: string;
+    cachedContent?: string;
+  }> {
+    const persona = await personaService.resolveForGroup(groupId);
+    let cachedContent: string | undefined;
+
+    if (geminiCacheManager) {
+      const staticCore = promptBuilder.buildStaticCore({
+        personaContent: persona.content,
+      });
+      const cacheKey = createHash("sha256")
+        .update(staticCore.text)
+        .update(config.models.chat.modelName)
+        .update(staticCore.promptVersion)
+        .digest("hex");
+
+      try {
+        const cache = await geminiCacheManager.ensureStaticCoreCache({
+          cacheKey,
+          modelName: config.models.chat.modelName,
+          personaId: persona.id,
+          personaHash: persona.contentHash,
+          promptVersion: staticCore.promptVersion,
+          staticCoreText: staticCore.text,
+        });
+        cachedContent = cache.cacheName;
+      } catch (error) {
+        logger.warn(`[${groupId}] Gemini 显式缓存创建失败，回退到普通请求:`, error);
+      }
+    }
+
+    return {
+      personaContent: persona.content,
+      cachedContent,
+    };
+  }
 
   async function triggerMemoryExtraction(groupId: string, reason: string): Promise<void> {
     if (!memory || !extractionScheduler) return;
@@ -329,6 +370,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
       const newMessageIdsForSearch = new Set(originalNewMessages.map((m) => m.id));
       const { text: recentMessagesFormatted, msgMap: searchMsgMap } = renderer.render(
         allMessagesForSearch,
+        new Set(),
         newMessageIdsForSearch,
       );
 
@@ -348,8 +390,11 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         }
       }
 
+      const { personaContent, cachedContent } = await resolvePersonaAndCache(groupId);
       const currentStickerSummary = stickerService?.getSummary() || undefined;
       const systemPrompt = promptBuilder.buildSystemPrompt({
+        personaContent,
+        includeStaticCore: !cachedContent,
         recentMessages: recentMessagesFormatted,
         userProfile: memoryUserProfile,
         groupCulture: memoryGroupCulture,
@@ -374,7 +419,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
           { role: "user", content: followupPrompt },
         ],
         config.models.chat,
-        { signal, purpose: "conversation-search" },
+        { signal, purpose: "conversation-search", cachedContent },
       );
 
       logger.info(
@@ -516,8 +561,11 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
 
       const allMessages = buffer.getRecent(groupId);
       const { text: recentMessagesText, msgMap } = renderer.render(allMessages, new Set(), newMessageIds);
+      const { personaContent, cachedContent } = await resolvePersonaAndCache(groupId);
       const currentStickerSummary = stickerService?.getSummary() || undefined;
       const systemPrompt = promptBuilder.buildSystemPrompt({
+        personaContent,
+        includeStaticCore: !cachedContent,
         recentMessages: recentMessagesText,
         userProfile: memoryUserProfile,
         groupCulture: memoryGroupCulture,
@@ -551,6 +599,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
           signal: controller.signal,
           responseFormat: "json_object",
           purpose: "conversation",
+          cachedContent,
         },
       );
 

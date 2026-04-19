@@ -8,6 +8,7 @@ const promptManager = getPromptManager();
 
 interface PromptOptions {
   personaContent?: string;
+  includeStaticCore?: boolean;
   userProfile?: string;
   groupCulture?: string;
   memories?: string;
@@ -80,7 +81,9 @@ export class PromptBuilder {
       personaContent: options.personaContent ?? this.layer3Persona,
     });
 
-    parts.push(staticCore.text);
+    if (options.includeStaticCore !== false) {
+      parts.push(staticCore.text);
+    }
 
     // ===== 动态部分（变化频率：偶尔到频繁）=====
 

@@ -12,6 +12,8 @@ import { MemoryExtractionScheduler } from "../memory/extraction-scheduler";
 import { SearchService } from "../search/router";
 import { StickerService } from "../sticker";
 import { ShadowLogger } from "../shadow-logger";
+import { PersonaService } from "../persona/service";
+import { GeminiCacheManager } from "../llm/gemini-cache";
 
 export interface ImageTask {
   messageId: string;
@@ -44,4 +46,6 @@ export interface RuntimeDeps {
   searchService: SearchService | null;
   stickerService: StickerService | null;
   shadowLogger: ShadowLogger | null;
+  personaService: PersonaService;
+  geminiCacheManager: GeminiCacheManager | null;
 }

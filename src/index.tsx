@@ -27,6 +27,7 @@ import { registerRuntimeEvents } from "./runtime/events";
 import { registerAdminCommands } from "./runtime/commands";
 import { extendPersonaTables } from "./persona/types";
 import { PersonaService, seedDefaultPersonaIfMissing } from "./persona/service";
+import { GeminiCacheManager } from "./llm/gemini-cache";
 
 declare module "@koishijs/plugin-console" {
   interface Events {
@@ -85,6 +86,10 @@ export function apply(ctx: Context, config: MioConfig) {
     return null;
   });
   const promptBuilder = new PromptBuilder(config.personaFile);
+  const chatProvider = providerManager.getProviderConfig(config.models.chat.providerId);
+  const geminiCacheManager = chatProvider?.type === "gemini"
+    ? new GeminiCacheManager(ctx, providerManager.getGeminiProvider(config.models.chat.providerId))
+    : null;
   logger.info(`人设文件已加载: ${config.personaFile} (${promptBuilder.getPersonaLength()} chars, 首行: "${promptBuilder.getPersonaPreview()}")`);
 
   extendTokenTable(ctx);
@@ -184,6 +189,8 @@ export function apply(ctx: Context, config: MioConfig) {
     searchService,
     stickerService,
     shadowLogger,
+    personaService,
+    geminiCacheManager,
   };
 
   const { processConversation, triggerMemoryExtraction } = createConversationRuntime(runtimeDeps, state);
