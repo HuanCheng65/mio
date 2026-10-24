@@ -3,6 +3,7 @@ import * as path from "path";
 import { createHash } from "node:crypto";
 import { Session, h } from "koishi";
 import { isOneBot, setMsgEmojiLike } from "../platform/onebot";
+import { passiveReplyBlocker, recordPassiveReply } from "../platform/qq";
 import { humanizedSend, resolveAtMentions, UserInfo } from "../delivery/humanize";
 import { getPromptManager } from "../memory/prompt-manager";
 import type { Action, LLMResponse, SearchRequest } from "../types/response";
@@ -222,6 +223,32 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
     });
   }
 
+  // 被动回复挂靠在本群最新一条消息上：离 5 分钟窗口最远，这条消息的回复次数也还没用过
+  function currentReplySession(groupId: string): Session {
+    const latest = state.latestSessions.get(groupId);
+    if (!latest) throw new Error(`[${groupId}] 没有可挂靠回复的消息会话`);
+    return latest;
+  }
+
+  /**
+   * 发送一段文字并记入 buffer。stop=true 表示被平台的被动回复限制拦下，
+   * 本轮剩余动作也不再发送（不改发主动消息）。
+   */
+  async function sendText(groupId: string, content: string, bufferText: string): Promise<{ sent: boolean; stop: boolean }> {
+    const replySession = currentReplySession(groupId);
+    const { sentParts, blocked } = await humanizedSend(replySession, content);
+    if (sentParts.length > 0) {
+      const recorded = blocked
+        ? sentParts.join("\n").replace(/<quote id="[^"]*"\/>/g, "").replace(/<at id="([^"]+)"\/>/g, "@#$1")
+        : bufferText;
+      pushBotMessage(groupId, replySession.selfId, recorded);
+    }
+    if (blocked) {
+      logger.warn(`[${groupId}] 停止发送（不改发主动消息）：${blocked}`);
+    }
+    return { sent: sentParts.length > 0, stop: blocked !== null };
+  }
+
   async function executeActions(
     actions: Action[],
     msgMap: Map<string, NormalizedMessage>,
@@ -238,9 +265,9 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
       if (action.type === "message") {
         if (!action.content.trim()) continue;
         const processed = resolveAtMentions(action.content, usersSnapshot).replace(/@#([0-9A-Za-z]+)/g, '<at id="$1"/>');
-        await humanizedSend(session, processed);
-        pushBotMessage(groupId, session.selfId, action.content);
-        hasSentMessage = true;
+        const result = await sendText(groupId, processed, action.content);
+        if (result.sent) hasSentMessage = true;
+        if (result.stop) break;
       } else if (action.type === "reply") {
         const realMsg = msgMap.get(action.target_msg_id);
         if (!realMsg) {
@@ -250,9 +277,9 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         if (!action.text?.trim()) continue;
 
         const processed = resolveAtMentions(action.text, usersSnapshot).replace(/@#([0-9A-Za-z]+)/g, '<at id="$1"/>');
-        await humanizedSend(session, `<quote id="${realMsg.id}"/>${processed}`);
-        pushBotMessage(groupId, session.selfId, action.text);
-        hasSentMessage = true;
+        const result = await sendText(groupId, `<quote id="${realMsg.id}"/>${processed}`, action.text);
+        if (result.sent) hasSentMessage = true;
+        if (result.stop) break;
       } else if (action.type === "react") {
         const realMsg = msgMap.get(action.target_msg_id);
         if (!realMsg) {
@@ -307,7 +334,14 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
             );
             continue;
           }
-          await session.send(h.image(imgBuf, stickerMimeType(sticker.imagePath)));
+          const replySession = currentReplySession(groupId);
+          const blocked = passiveReplyBlocker(replySession);
+          if (blocked) {
+            logger.warn(`[${groupId}] 停止发送（不改发主动消息）：${blocked}`);
+            break;
+          }
+          await replySession.send(h.image(imgBuf, stickerMimeType(sticker.imagePath)));
+          recordPassiveReply(replySession);
           hasSentMessage = true;
           logger.debug(`[sticker] 发送表情包: ${path.basename(sticker.imagePath)}`);
           pushBotMessage(

@@ -1,4 +1,5 @@
 import { Session } from 'koishi';
+import { passiveReplyBlocker, recordPassiveReply } from '../platform/qq';
 
 export interface UserInfo {
   name: string;
@@ -146,15 +147,20 @@ function calculateDelay(length: number, options: Required<DeliveryOptions>): num
   return baseDelay + jitter;
 }
 
+/**
+ * 拆分后逐条发送。每条发送前检查平台的被动回复限制，不满足就停下，
+ * 返回已发出的片段和停下的原因（全部发出时 blocked 为 null）。
+ */
 export async function humanizedSend(
   session: Session,
   content: string,
   options?: DeliveryOptions
-): Promise<void> {
+): Promise<{ sentParts: string[]; blocked: string | null }> {
   const opts = { ...defaultOptions, ...options };
 
   // 拆分消息
   const parts = splitMessage(content, opts.splitThreshold);
+  const sentParts: string[] = [];
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i].trim().replace(/。$/, '');
@@ -164,6 +170,12 @@ export async function humanizedSend(
     const delay = i === 0 ? calculateDelay(part.length, opts) : Math.random() * 2000 + 1000;
 
     await new Promise((resolve) => setTimeout(resolve, delay));
+    const blocked = passiveReplyBlocker(session);
+    if (blocked) return { sentParts, blocked };
     await session.send(part);
+    recordPassiveReply(session);
+    sentParts.push(part);
   }
+
+  return { sentParts, blocked: null };
 }

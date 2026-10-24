@@ -7,6 +7,7 @@ export function createRuntimeState(): RuntimeState {
     pendingImageTasks: new Map(),
     activeRequests: new Map(),
     lastRespondedAt: new Map<string, number>(),
+    latestSessions: new Map(),
     extractionLocks: new Map<string, boolean>(),
   };
 }

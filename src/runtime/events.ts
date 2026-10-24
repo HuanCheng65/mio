@@ -193,6 +193,7 @@ export function registerRuntimeEvents(
     }
 
     if (msg.isBot) return;
+    state.latestSessions.set(groupId, session);
 
     const renderedText = renderer.renderContent(msg);
     const mentionsBot = isMentioningBot(renderedText, config);

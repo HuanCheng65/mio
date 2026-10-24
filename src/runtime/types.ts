@@ -1,4 +1,4 @@
-import { Context } from "koishi";
+import { Context, Session } from "koishi";
 import { Config } from "../config";
 import { PromptBuilder } from "../context/prompt-builder";
 import { Debouncer } from "../pipeline/debouncer";
@@ -28,6 +28,8 @@ export interface RuntimeState {
   pendingImageTasks: Map<string, ImageTask[]>;
   activeRequests: Map<string, AbortController>;
   lastRespondedAt: Map<string, number>;
+  /** 每个群最新一条群友消息的会话，发送时用它挂靠被动回复 */
+  latestSessions: Map<string, Session>;
   extractionLocks: Map<string, boolean>;
 }
 
