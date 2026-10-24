@@ -28,6 +28,8 @@ export interface MioLogEntryRow {
   content: LogPart[];
   toolCalls: ToolCall[] | null;
   toolCallId: string | null;
+  /** assistant 条目的推理内容（思考模式），原样发回以保持前缀稳定 */
+  reasoning: string | null;
   /** user 批次覆盖到的最后一个事件 seq */
   lastSeq: number | null;
   tokens: number;
@@ -49,6 +51,7 @@ export function extendLogTable(ctx: Context): void {
     content: "json",
     toolCalls: { type: "json", nullable: true },
     toolCallId: { type: "string", length: 63, nullable: true },
+    reasoning: { type: "text", nullable: true },
     lastSeq: { type: "unsigned", nullable: true },
     tokens: "unsigned",
     createdAt: "unsigned(8)",
@@ -60,7 +63,7 @@ export function extendLogTable(ctx: Context): void {
 
 export type ChatMessage =
   | { role: "user"; content: string | ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } })[] }
-  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[]; reasoning_content?: string }
   | { role: "tool"; tool_call_id: string; content: string };
 
 export interface NewLogEntry {
@@ -68,6 +71,7 @@ export interface NewLogEntry {
   content: LogPart[];
   toolCalls?: ToolCall[];
   toolCallId?: string;
+  reasoning?: string | null;
 }
 
 const MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
@@ -157,8 +161,9 @@ export class AgentLog {
       content: entry.content,
       toolCalls: entry.toolCalls ?? null,
       toolCallId: entry.toolCallId ?? null,
+      reasoning: entry.reasoning ?? null,
       lastSeq,
-      tokens: partsTokens(entry.content) + toolCallTokens,
+      tokens: partsTokens(entry.content) + toolCallTokens + (entry.reasoning ? estimateTokens(entry.reasoning) : 0),
       createdAt: Date.now(),
     });
   }
@@ -190,7 +195,12 @@ export class AgentLog {
         if (!e.toolCallId) throw new Error(`log entry ${e.id}: tool result without toolCallId`);
         messages.push({ role: "tool", tool_call_id: e.toolCallId, content: text });
       } else if (e.role === "assistant") {
-        messages.push({ role: "assistant", content: text || null, ...(e.toolCalls ? { tool_calls: e.toolCalls } : {}) });
+        messages.push({
+          role: "assistant",
+          content: text || null,
+          ...(e.toolCalls ? { tool_calls: e.toolCalls } : {}),
+          ...(e.reasoning ? { reasoning_content: e.reasoning } : {}),
+        });
       } else if (e.content.every((p) => p.type === "text")) {
         messages.push({ role: "user", content: text });
       } else {
