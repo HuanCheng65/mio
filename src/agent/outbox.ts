@@ -60,6 +60,10 @@ export class Outbox {
     }
   }
 
+  lastSentAt(groupId: string): number | undefined {
+    return this.sentAt.get(groupId)?.at(-1);
+  }
+
   isOwnMessage(groupId: string, messageId: string): boolean {
     return this.own.get(groupId)?.includes(messageId) ?? false;
   }

@@ -13,7 +13,6 @@ import { MemoryService } from "./memory";
 import { MemoryExtractionScheduler } from "./memory/extraction-scheduler";
 import { SearchService } from "./search/router";
 import { StickerService } from "./sticker";
-import { extendTokenTable, tokenTracker } from "./llm/token-tracker";
 import { ShadowLogger } from "./shadow-logger";
 import { createRuntimeState } from "./runtime/state";
 import { createConversationRuntime } from "./runtime/conversation";
@@ -65,14 +64,6 @@ export function tryBootstrapServices(ctx: Context, config: MioConfig, logger: Lo
     ? new GeminiCacheManager(ctx, providerManager.getGeminiProvider(config.models.chat.providerId))
     : null;
   logger.info(`人设文件已加载: ${config.personaFile} (${promptBuilder.getPersonaLength()} chars, 首行: "${promptBuilder.getPersonaPreview()}")`);
-
-  extendTokenTable(ctx);
-  tokenTracker.init(ctx);
-  const tokenFlushInterval = setInterval(() => tokenTracker.flush(), 60_000);
-  ctx.on("dispose", async () => {
-    clearInterval(tokenFlushInterval);
-    await tokenTracker.flush();
-  });
 
   const imageProcessor = config.vision.enabled ? new ImageProcessor(llm, config.models.vision) : null;
   const normalizer = new MessageNormalizer(imageProcessor, config.botName);

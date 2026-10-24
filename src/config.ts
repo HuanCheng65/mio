@@ -47,6 +47,28 @@ export interface Config {
     imageDir: string;
     poolSize: number;
   };
+  agent: {
+    model: ModelConfig;
+    personaFile: string;
+    maxSteps: number;
+    maxBatchEvents: number;
+    guards: {
+      minIntervalMs: number;
+      maxPerHour: number;
+      maxConsecutive: number;
+    };
+    sleep: {
+      maxSteps: number;
+      compactTokens: number;
+      idleHours: number;
+      minTokens: number;
+      tailEvents: number;
+    };
+    recollection: {
+      hintLimit: number;
+      hintMinScore: number;
+    };
+  };
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -190,4 +212,38 @@ export const Config: Schema<Config> = Schema.object({
     imageDir: Schema.string().default("./data/stickers").description("表情包存储目录"),
     poolSize: Schema.number().default(80).description("活跃池软上限"),
   }).description("表情包系统配置"),
+
+  agent: Schema.object({
+    model: Schema.object({
+      providerId: Schema.string().default("deepseek").description("供应商 ID（需要 OpenAI 兼容、支持工具调用和图片）"),
+      modelName: Schema.string().default("deepseek-flash").description("模型名称"),
+      temperature: Schema.number().description("温度参数（不填用模型默认）"),
+      maxTokens: Schema.number().default(4096).description("最大 Token 数（思考模型的推理也计入）"),
+      reasoning: Schema.object({
+        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
+        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
+        budgetTokens: Schema.number(),
+      }).description("推理控制"),
+      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
+    }).description("agent 模型（mio.agent 模式的群使用；embedding 和搜索沿用上面的配置）"),
+    personaFile: Schema.string().default("mio-agent.md").description("agent 人设文件名（data/persona 下）"),
+    maxSteps: Schema.number().default(6).description("每次唤醒最多几步工具调用"),
+    maxBatchEvents: Schema.number().default(80).description("一批最多渲染多少条消息（积压过多时只看最近的）"),
+    guards: Schema.object({
+      minIntervalMs: Schema.number().default(1500).description("两次发送的最短间隔（毫秒）"),
+      maxPerHour: Schema.number().default(40).description("每小时最多发几条"),
+      maxConsecutive: Schema.number().default(6).description("没人接话时最多连着发几条"),
+    }).description("防刷屏护栏（只防失控，放得宽）"),
+    sleep: Schema.object({
+      maxSteps: Schema.number().default(12).description("睡前整理最多几步"),
+      compactTokens: Schema.number().default(100_000).description("log 达到这个大小就睡"),
+      idleHours: Schema.number().default(4).description("群里安静多少小时就睡"),
+      minTokens: Schema.number().default(8000).description("log 小于这个不整理"),
+      tailEvents: Schema.number().default(30).description("新一段开头带上的最近消息条数"),
+    }).description("睡眠与压缩"),
+    recollection: Schema.object({
+      hintLimit: Schema.number().default(3).description("每批最多浮现几条记忆"),
+      hintMinScore: Schema.number().default(0.55).description("记忆浮现的相关度门槛"),
+    }).description("记忆浮现"),
+  }).description("新运行时（agent）"),
 });

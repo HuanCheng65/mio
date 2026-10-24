@@ -5,6 +5,8 @@ const MODE_LABELS: Record<MioGroupMode, string> = {
   record: "已在本群开启录制（只记录群聊，不回复）",
   on: "已在本群开启",
   shadow: "已在本群开启影子模式（正常推理但不发送消息，记录到日志）",
+  agent: "已在本群开启新运行时（agent）",
+  "agent-shadow": "已在本群开启新运行时的影子模式（照常思考和记笔记，但不发消息）",
   off: "已在本群关闭",
 };
 
@@ -12,7 +14,7 @@ const MODE_LABELS: Record<MioGroupMode, string> = {
 export function registerGroupCommands(ctx: Context, groups: GroupRegistry, logger: ReturnType<Context["logger"]>): void {
   ctx.command("mio", "澪管理指令", { authority: 4 });
 
-  for (const mode of ["record", "on", "shadow", "off"] as const) {
+  for (const mode of ["record", "on", "shadow", "agent", "agent-shadow", "off"] as const) {
     ctx
       .command(`mio.${mode}`, MODE_LABELS[mode].replace(/^已在/, "在"), { authority: 4 })
       .channelFields(["mioMode"])

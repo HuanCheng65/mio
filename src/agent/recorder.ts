@@ -2,10 +2,13 @@ import { Context, Session } from "koishi";
 import type { MessageNormalizer } from "../perception/normalizer";
 import type { ImageSegment } from "../perception/types";
 import type { GroupRegistry } from "../runtime/groups";
-import type { EventStore } from "./event-store";
+import type { EventStore, MioEventRow } from "./event-store";
 import type { MediaStore } from "./media-store";
 
 type Logger = ReturnType<Context["logger"]>;
+
+/** 录下一条群友消息之后调用（新运行时据此唤醒） */
+export type RecordListener = (groupId: string, session: Session, event: MioEventRow) => void;
 
 /**
  * 把开启了 mio 的群的聊天写进事件流。群友消息走中间件，排在 Koishi 指令处理之后，
@@ -13,9 +16,17 @@ type Logger = ReturnType<Context["logger"]>;
  */
 export function registerRecorder(
   ctx: Context,
-  deps: { groups: GroupRegistry; normalizer: MessageNormalizer; events: EventStore; media: MediaStore; logger: Logger },
+  deps: {
+    groups: GroupRegistry;
+    normalizer: MessageNormalizer;
+    events: EventStore;
+    media: MediaStore;
+    logger: Logger;
+    /** 可在注册后追加（新运行时启动时加入） */
+    listeners: RecordListener[];
+  },
 ): void {
-  const { groups, normalizer, events, media, logger } = deps;
+  const { groups, normalizer, events, media, logger, listeners } = deps;
 
   async function saveImages(groupId: string, segments: { type: string }[]): Promise<void> {
     for (const seg of segments) {
@@ -35,7 +46,7 @@ export function registerRecorder(
     const groupId = session.cid;
     if (!groups.isRecorded(groupId)) return;
 
-    await events.append(groupId, async () => {
+    const event = await events.append(groupId, async () => {
       const msg = await normalizer.normalize(session, true);
       await saveImages(groupId, msg.segments);
       return {
@@ -47,6 +58,7 @@ export function registerRecorder(
         body: msg,
       };
     });
+    for (const listener of listeners) listener(groupId, session, event);
   }
 
   ctx.middleware((session, next) => {
