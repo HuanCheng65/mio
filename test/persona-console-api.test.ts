@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { registerConsoleListeners } from "../src/console-listeners";
+import { registerServiceListeners } from "../src/console/service-listeners";
 
 function createFakeConsoleCtx(registered: string[], handlers: Map<string, (...args: any[]) => any>) {
   return {
@@ -32,7 +32,7 @@ test("console listeners expose persona CRUD and binding events", async () => {
   const handlers = new Map<string, (...args: any[]) => any>();
   const ctx = createFakeConsoleCtx(registered, handlers);
 
-  registerConsoleListeners(ctx as any, console, null as any, createFakePersonaService() as any);
+  registerServiceListeners(ctx as any, console, null as any, createFakePersonaService() as any);
 
   assert.ok(registered.includes("mio/persona-list"));
   assert.ok(registered.includes("mio/persona-save"));
@@ -59,7 +59,7 @@ test("persona delete does not invalidate caches if deletion fails", async () => 
     },
   };
 
-  registerConsoleListeners(ctx as any, console, null as any, personaService as any, geminiCacheManager as any);
+  registerServiceListeners(ctx as any, console, null as any, personaService as any, geminiCacheManager as any);
 
   await assert.rejects(() => handlers.get("mio/persona-delete")!("default"));
   assert.equal(invalidated, 0);
