@@ -66,6 +66,8 @@ export class AgentRuntime {
   private running = new Map<string, Promise<void>>();
   private wakeAgain = new Set<string>();
   private sleepRequested = new Set<string>();
+  /** 手动要求的整理：不管 log 有多小都整理 */
+  private forcedSleep = new Set<string>();
   private idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private lastRequestAt = new Map<string, number>();
 
@@ -82,8 +84,9 @@ export class AgentRuntime {
     return this.drain(groupId);
   }
 
-  requestSleep(groupId: string): Promise<void> {
+  requestSleep(groupId: string, force = false): Promise<void> {
     this.sleepRequested.add(groupId);
+    if (force) this.forcedSleep.add(groupId);
     return this.drain(groupId);
   }
 
@@ -108,7 +111,7 @@ export class AgentRuntime {
       while (this.sleepRequested.has(groupId) || this.wakeAgain.has(groupId)) {
         if (this.sleepRequested.has(groupId)) {
           this.sleepRequested.delete(groupId);
-          await this.sleepOnce(groupId);
+          await this.sleepOnce(groupId, this.forcedSleep.delete(groupId));
         } else {
           this.wakeAgain.delete(groupId);
           await this.wakeOnce(groupId);
@@ -132,10 +135,10 @@ export class AgentRuntime {
     if (closed > 0) this.logger.warn(`[${groupId}] 上次有 ${closed} 个工具调用执行到一半进程就退出了，已在 log 里标成中断`);
   }
 
-  private async sleepOnce(groupId: string): Promise<void> {
+  private async sleepOnce(groupId: string, force: boolean): Promise<void> {
     await this.closeInterrupted(groupId);
     const tokens = await this.log.tokenCount(groupId);
-    if (tokens < this.options.sleep.minTokens) {
+    if (!force && tokens < this.options.sleep.minTokens) {
       this.logger.debug(`[${groupId}] log 只有 ${tokens} tokens，不用整理`);
       return;
     }

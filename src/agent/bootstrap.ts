@@ -19,6 +19,7 @@ import { createReactTool, createSayTool, createStickerTool } from "./outward-too
 import { Recollection } from "./recollection";
 import { talkShareNote } from "./talk-share";
 import { markOwnSends } from "./qq-refs";
+import { passiveReplyBlocker, recordPassiveReply } from "../platform/qq";
 import type { RecordListener } from "./recorder";
 import { AgentRuntime, loadAgentSystemPrompt, loadSleepPrompt } from "./runtime";
 import { ToolRegistry, type AgentTool } from "./tools";
@@ -134,6 +135,35 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
     });
   };
   listeners.push(listener);
+
+  ctx
+    .command("mio.sleep", "让澪现在就睡前整理：把这个群的 log 压成新的一段", { authority: 4 })
+    .action(async ({ session }) => {
+      if (!session || session.isDirect) return "请在群里使用这个指令";
+      const groupId = session.cid;
+      if (!groups.runsAgent(groupId)) return "这个群没有开新运行时";
+      const tokens = await log.tokenCount(groupId);
+      if (tokens === 0) return "这个群的 log 是空的，不用整理";
+
+      // 整理要跑好几分钟：先回一句，结果在被动回复窗口还在时再回；窗口过了只写日志，不占主动消息额度
+      const reply = async (text: string) => {
+        const blocked = passiveReplyBlocker(session);
+        if (blocked) {
+          logger.info(`[${groupId}] 手动整理的结果没回到群里（${blocked}）：${text}`);
+          return;
+        }
+        await session.send(text);
+        recordPassiveReply(session);
+      };
+      await reply(`开始整理了，这一段 log 有 ${tokens} tokens，要几分钟`);
+      runtime.requestSleep(groupId, true).then(
+        () => reply("整理完了，这个群的 log 收成了新的一段"),
+        (err) => {
+          logger.error(`[${groupId}] 手动整理失败:`, err);
+          return reply(`整理失败：${err instanceof Error ? err.message : String(err)}`);
+        },
+      ).catch((err) => logger.error(`[${groupId}] 手动整理的结果发不出去:`, err));
+    });
 
   ctx.on("dispose", () => {
     listeners.splice(listeners.indexOf(listener), 1);

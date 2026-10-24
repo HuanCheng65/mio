@@ -222,6 +222,14 @@ test("small logs are not consolidated", async () => {
   await app.stop();
 });
 
+test("a manual sleep consolidates even a small log", async () => {
+  const { app, log, runtime, say } = await setup([finish()], { sleep: { minTokens: 10_000 } });
+  await say("早");
+  await runtime.requestSleep(G, true);
+  assert.equal(await log.currentSegment(G), 2);
+  await app.stop();
+});
+
 test("a log over the size limit sleeps right after the wake", async () => {
   const { app, log, runtime, say } = await setup([reply(), finish()], { sleep: { compactTokens: 1 } });
   await say("早");
