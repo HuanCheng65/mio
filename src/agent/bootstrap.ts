@@ -17,6 +17,7 @@ import { NOTE_EMBEDDING_KEY, NoteStore } from "./notes";
 import { Outbox } from "./outbox";
 import { createReactTool, createSayTool, createStickerTool } from "./outward-tools";
 import { Recollection } from "./recollection";
+import { talkShareNote } from "./talk-share";
 import type { RecordListener } from "./recorder";
 import { AgentRuntime, loadAgentSystemPrompt, loadSleepPrompt } from "./runtime";
 import { ToolRegistry, type AgentTool } from "./tools";
@@ -55,13 +56,17 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
 
   const notes = new NoteStore(ctx, embedding);
   const recollection = new Recollection(ctx, notes, aliases, agent.recollection);
+  const outbox = new Outbox(agent.guards);
   const log = new AgentLog(ctx, aliases, {
     botName: config.botName,
     mediaDir,
     maxBatchEvents: agent.maxBatchEvents,
-    annotate: (groupId, batch) => recollection.annotate(groupId, batch),
+    annotate: async (groupId, batch) => {
+      const recalled = await recollection.annotate(groupId, batch);
+      const share = await talkShareNote(ctx, outbox, groupId);
+      return share ? [...recalled, share] : recalled;
+    },
   });
-  const outbox = new Outbox(agent.guards);
 
   const outwardDeps = { events, aliases, outbox };
   const memoryDeps = { ctx, notes, aliases, events };

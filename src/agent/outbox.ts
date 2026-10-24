@@ -60,6 +60,11 @@ export class Outbox {
     }
   }
 
+  /** 某个时刻以来发了几条（只记得最近一小时） */
+  sentSince(groupId: string, since: number): number {
+    return (this.sentAt.get(groupId) ?? []).filter((t) => t >= since).length;
+  }
+
   lastSentAt(groupId: string): number | undefined {
     return this.sentAt.get(groupId)?.at(-1);
   }
