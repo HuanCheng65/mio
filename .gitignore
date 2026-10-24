@@ -22,3 +22,5 @@ tsconfig.tsbuildinfo
 .env
 .codex
 .tmp-playwright
+.agents
+skills-lock.json
