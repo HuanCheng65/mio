@@ -220,7 +220,8 @@ export const Config: Schema<Config> = Schema.object({
       temperature: Schema.number().description("温度参数（不填用模型默认）"),
       maxTokens: Schema.number().default(4096).description("最大 Token 数（思考模型的推理也计入）"),
       reasoning: Schema.object({
-        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
+        // 回放对比：开着思考时她会先打几版草稿再挑措辞，说出来像组织过的句子；关掉更像脱口而出
+        mode: Schema.union(["auto", "off", "effort", "budget"] as const).default("off"),
         effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
         budgetTokens: Schema.number(),
       }).description("推理控制"),
