@@ -18,6 +18,7 @@ import { Outbox } from "./outbox";
 import { createReactTool, createSayTool, createStickerTool } from "./outward-tools";
 import { Recollection } from "./recollection";
 import { talkShareNote } from "./talk-share";
+import { GroupNames } from "./group-names";
 import { markOwnSends } from "./qq-refs";
 import { passiveReplyBlocker, recordPassiveReply } from "../platform/qq";
 import type { RecordListener } from "./recorder";
@@ -59,10 +60,12 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   const notes = new NoteStore(ctx, embedding);
   const recollection = new Recollection(ctx, notes, aliases, agent.recollection);
   const outbox = new Outbox(agent.guards);
+  const groupNames = new GroupNames(ctx, logger);
   const log = new AgentLog(ctx, aliases, {
     botName: config.botName,
     mediaDir,
     maxBatchEvents: agent.maxBatchEvents,
+    groupName: (groupId) => groupNames.get(groupId),
     annotate: async (groupId, batch) => {
       const recalled = await recollection.annotate(groupId, batch);
       const share = await talkShareNote(ctx, outbox, groupId);

@@ -92,6 +92,7 @@ export class AgentLog {
       maxBatchEvents: number;
       /** 给每批附上旁注（记忆的浮现）；在别名分配之后调用 */
       annotate?: (groupId: string, events: MioEventRow[]) => Promise<string[]>;
+      groupName?: (groupId: string) => Promise<string | undefined>;
     },
   ) {}
 
@@ -173,7 +174,8 @@ export class AgentLog {
     }
 
     const annotations = options.annotate && this.options.annotate ? await this.options.annotate(groupId, events) : [];
-    return renderBatch(events, { aliases, names, seqByMessageId, botName: this.options.botName, skipped: options.skipped, annotations });
+    const groupName = await this.options.groupName?.(groupId);
+    return renderBatch(events, { aliases, names, seqByMessageId, botName: this.options.botName, groupName, skipped: options.skipped, annotations });
   }
 
   /** 追加 assistant / tool 条目（agent 循环使用） */

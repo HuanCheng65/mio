@@ -12,6 +12,8 @@ export interface BatchContext {
   /** 平台消息 ID → 事件 seq，用来把回复和撤回指回 [mN] */
   seqByMessageId: Map<string, number>;
   botName: string;
+  /** 群名（查得到时渲染在日期后面） */
+  groupName?: string;
   /** 因积压过多而没有渲染的更早事件数 */
   skipped?: number;
   /** 附在这一批末尾的旁注（人物卡片、隐约记得等） */
@@ -21,9 +23,9 @@ export interface BatchContext {
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const pad = (n: number) => String(n).padStart(2, "0");
 
-function dateHeader(ts: number): string {
+function dateHeader(ts: number, groupName?: string): string {
   const d = new Date(ts);
-  return `〔${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${WEEKDAYS[d.getDay()]}〕`;
+  return `〔${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${WEEKDAYS[d.getDay()]}${groupName ? ` · ${groupName}` : ""}〕`;
 }
 
 function clock(ts: number): string {
@@ -113,7 +115,7 @@ function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext): 
 export function renderBatch(events: MioEventRow[], ctx: BatchContext): LogPart[] {
   if (events.length === 0) throw new Error("renderBatch: empty batch");
   const parts: LogPart[] = [];
-  let lines: string[] = [dateHeader(events[0].timestamp)];
+  let lines: string[] = [dateHeader(events[0].timestamp, ctx.groupName)];
   if (ctx.skipped) lines.push(`〔之前还有 ${ctx.skipped} 条消息没看到〕`);
   const flush = () => {
     if (lines.length > 0) parts.push({ type: "text", text: lines.join("\n") });

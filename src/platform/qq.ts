@@ -16,6 +16,15 @@ export function isQQOfficial(session: Session): boolean {
   return session.platform === "qq";
 }
 
+/** 官方 QQ 的"获取群基本信息"接口（/v2/groups/{group_openid}/info）；群消息事件里没有群名，只能这样查 */
+export async function fetchQQGroupName(bot: Session["bot"], groupOpenid: string): Promise<string> {
+  const http = (bot.internal as any).http();
+  const response = await http(`/v2/groups/${groupOpenid}/info`, { method: "GET" });
+  const name: unknown = response.data?.group_name;
+  if (typeof name !== "string") throw new Error(`群基本信息里没有 group_name: ${JSON.stringify(response.data)}`);
+  return name;
+}
+
 /**
  * 官方 QQ 群消息的引用索引，放在原始事件的 message_scene.ext 里（"msg_idx=REFIDX_…" 这样的条目）。
  * own 是这条消息自己的索引；quoted 只在引用消息里有，指向被引用的那条。
