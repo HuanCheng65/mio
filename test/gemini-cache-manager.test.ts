@@ -181,3 +181,30 @@ test("GeminiCacheManager stores the static core as the cache's systemInstruction
   assert.equal(params.config.systemInstruction, "core");
   assert.equal(params.config.contents, undefined);
 });
+
+test("GeminiCacheManager recreates a cache that is about to expire", async () => {
+  const { ctx, rows } = createFakeCtx();
+  const gemini = createFakeGemini();
+  const manager = new GeminiCacheManager(ctx, gemini.ai);
+  rows["mio.gemini_cache"].push({
+    id: 1,
+    layer: "static_core",
+    cacheKey: "abc",
+    modelName: "gemini-3-flash-preview",
+    cacheName: "cachedContents/old",
+    expiresAt: Date.now() + 60_000,
+    updatedAt: Date.now(),
+  });
+
+  const cache = await manager.ensureStaticCoreCache({
+    cacheKey: "abc",
+    modelName: "gemini-3-flash-preview",
+    personaId: "default",
+    personaHash: "hash-a",
+    promptVersion: "v1",
+    staticCoreText: "core",
+  });
+
+  assert.equal(cache.cacheName, "cachedContents/1");
+  assert.deepEqual(gemini.deletedNames, ["cachedContents/old"]);
+});

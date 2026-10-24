@@ -14,6 +14,8 @@ export interface GeminiCacheRecord extends MioGeminiCacheRow {}
 
 const STATIC_CORE_LAYER = "static_core";
 const DEFAULT_TTL_MS = 60 * 60 * 1000;
+// 剩余有效期不足这个值的缓存不再使用，避免请求发出后、模型读取前缓存恰好过期
+const EXPIRY_SAFETY_MARGIN_MS = 5 * 60 * 1000;
 
 function toExpiresAt(expireTime?: string): number {
   if (!expireTime) {
@@ -95,15 +97,16 @@ export class GeminiCacheManager {
       layer: STATIC_CORE_LAYER,
     });
 
+    const usableUntil = Date.now() + EXPIRY_SAFETY_MARGIN_MS;
     const fresh = rows
-      .filter((row) => row.expiresAt > Date.now())
+      .filter((row) => row.expiresAt > usableUntil)
       .sort((a, b) => b.updatedAt - a.updatedAt)[0];
 
     if (fresh) {
       return fresh;
     }
 
-    const stale = rows.filter((row) => row.expiresAt <= Date.now());
+    const stale = rows.filter((row) => row.expiresAt <= usableUntil);
     if (stale.length > 0) {
       await this.deleteRows(stale);
     }
