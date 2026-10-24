@@ -99,7 +99,7 @@ export const Config: Schema<Config> = Schema.object({
       providerId: Schema.string().default("deepseek").description("使用的供应商 ID"),
       modelName: Schema.string().default("deepseek-chat").description("模型名称"),
       temperature: Schema.number().default(0.9).description("温度参数"),
-      maxTokens: Schema.number().default(200).description("最大 Token 数"),
+      maxTokens: Schema.number().default(2048).description("最大 Token 数（思考模型的思考过程也计入，太小会截断 JSON）"),
       reasoning: Schema.object({
         mode: Schema.union(["auto", "off", "effort", "budget"] as const).description("推理模式"),
         effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const).description("Effort 等级（OpenAI / OpenRouter / DeepSeek）"),

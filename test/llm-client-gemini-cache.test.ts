@@ -85,3 +85,22 @@ test("LLMClient folds system text into a single leading user turn when using cac
     { role: "user", parts: [{ text: "dynamic context" }, { text: "new messages" }] },
   ]);
 });
+
+test("LLMClient throws when Gemini output is truncated by maxTokens", async () => {
+  const fakeProvider = {
+    models: {
+      async generateContent() {
+        return {
+          candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{ text: '{"thought":' }] } }],
+          usageMetadata: {},
+        };
+      },
+    },
+  };
+  const client = new LLMClient(createProviderManager(fakeProvider));
+
+  await assert.rejects(
+    client.chat([{ role: "user", content: "hi" }], { providerId: "gemini", modelName: "m", maxTokens: 10 }),
+    /maxTokens \(10\)/,
+  );
+});

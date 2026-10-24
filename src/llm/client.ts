@@ -142,6 +142,10 @@ export class LLMClient {
       signal ? { signal } : undefined,
     );
 
+    if (response.choices[0].finish_reason === "length") {
+      throw new Error(`${modelConfig.modelName} 输出因达到 maxTokens (${maxTokens}) 被截断，请调大该模型的 maxTokens`);
+    }
+
     return {
       content: response.choices[0].message.content || "",
       usage: {
@@ -230,9 +234,8 @@ export class LLMClient {
       fullText = response.text || "";
     }
 
-    // 如果因为 token 限制被截断，发出警告
     if (finishReason === "MAX_TOKENS") {
-      console.warn(`[Gemini] 响应因达到 maxTokens (${maxTokens}) 被截断`);
+      throw new Error(`${modelConfig.modelName} 输出因达到 maxTokens (${maxTokens}) 被截断，请调大该模型的 maxTokens`);
     }
 
     return {
