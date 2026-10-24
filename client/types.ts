@@ -17,6 +17,16 @@ export interface TokenUsageRow {
   calls: number;
 }
 
+export interface TokenUsageDetail {
+  date: string;
+  model: string;
+  purpose: string;
+  promptTokens: number;
+  completionTokens: number;
+  cachedTokens: number;
+  calls: number;
+}
+
 export interface TokenStats {
   totalPromptTokens: number;
   totalCompletionTokens: number;
@@ -25,6 +35,7 @@ export interface TokenStats {
   byModel: Record<string, TokenUsageRow>;
   byPurpose: Record<string, TokenUsageRow>;
   byDate: Record<string, TokenUsageRow>;
+  detail: TokenUsageDetail[];
 }
 
 export interface MemoryStats {

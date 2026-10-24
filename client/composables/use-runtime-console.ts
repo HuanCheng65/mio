@@ -24,41 +24,30 @@ export function useRuntimeConsole() {
   const lastResult = ref("");
   const migrateResult = ref("");
 
-  const byModelEntries = computed(() => {
-    if (!tokenStats.value?.byModel) {
-      return [] as Array<[string, TokenStats["byModel"][string]]>;
-    }
-
-    return Object.entries(tokenStats.value.byModel);
-  });
-
-  const sortedByDate = computed(() => {
-    if (!tokenStats.value?.byDate) {
-      return [] as Array<[string, TokenStats["byDate"][string]]>;
-    }
-
-    return Object.entries(tokenStats.value.byDate).sort((a, b) => b[0].localeCompare(a[0]));
-  });
-
-  const sortedByPurpose = computed(() => {
-    if (!tokenStats.value?.byPurpose) {
-      return [] as Array<[string, TokenStats["byPurpose"][string]]>;
-    }
-
-    return Object.entries(tokenStats.value.byPurpose).sort((a, b) => {
-      const tokensA = a[1].promptTokens + a[1].completionTokens;
-      const tokensB = b[1].promptTokens + b[1].completionTokens;
-      return tokensB - tokensA;
-    });
-  });
-
   const todayTokens = computed(() => {
     const todayUsage = tokenStats.value?.byDate?.[today()];
-    if (!todayUsage) {
-      return "0";
-    }
-
+    if (!todayUsage) return "0";
     return formatNumber(todayUsage.promptTokens + todayUsage.completionTokens);
+  });
+
+  const totalTokens = computed(() => {
+    if (!tokenStats.value) return "0";
+    return formatNumber(tokenStats.value.totalPromptTokens + tokenStats.value.totalCompletionTokens);
+  });
+
+  const totalCalls = computed(() => {
+    if (!tokenStats.value) return "0";
+    return formatNumber(tokenStats.value.totalCalls);
+  });
+
+  const cacheHitRate = computed(() => {
+    if (!tokenStats.value || tokenStats.value.totalPromptTokens === 0) return "0%";
+    const rate = (tokenStats.value.totalCachedTokens / tokenStats.value.totalPromptTokens) * 100;
+    return rate.toFixed(1) + "%";
+  });
+
+  const detailRows = computed(() => {
+    return tokenStats.value?.detail ?? [];
   });
 
   function formatNumber(value: number) {
@@ -157,10 +146,11 @@ export function useRuntimeConsole() {
     memoryEnabled,
     lastResult,
     migrateResult,
-    byModelEntries,
-    sortedByDate,
-    sortedByPurpose,
     todayTokens,
+    totalTokens,
+    totalCalls,
+    cacheHitRate,
+    detailRows,
     formatNumber,
     loadStats,
     loadTokenStats,

@@ -1,133 +1,71 @@
 <template>
   <k-layout>
-    <div class="mio-console">
-      <header class="console-hero">
-        <div>
-          <p class="eyebrow">Mio Console</p>
-          <h1>统一控制台</h1>
-          <p class="hero-copy">
-            把 persona studio、运行统计和维护工具放到同一个入口里，同时保持分区清晰，避免互相打架。
-          </p>
+    <div class="console-shell">
+      <ConsoleSidebar
+        :sections="sections"
+        :active-section="activeSection"
+        @select="activeSection = $event"
+      />
+
+      <main class="workspace">
+        <header class="workspace-header">
+          <div>
+            <h1 class="workspace-title">{{ activeSectionMeta.label }}</h1>
+            <p class="workspace-desc">{{ activeSectionMeta.description }}</p>
+          </div>
+          <div class="workspace-actions">
+            <button class="btn btn--ghost" type="button" @click="refreshAll">
+              <RefreshCw :size="15" />
+              <span>刷新</span>
+            </button>
+            <button
+              v-if="activeSection === 'persona'"
+              class="btn btn--primary"
+              type="button"
+              @click="studio.openCreateDialog()"
+            >
+              <Plus :size="15" />
+              <span>新建人设</span>
+            </button>
+          </div>
+        </header>
+
+        <div class="workspace-body">
+          <ConfigStudioPanel v-if="activeSection === 'config'" :studio="config" />
+          <PersonaStudioPanel v-else-if="activeSection === 'persona'" :studio="studio" />
+          <RuntimeOverviewPanel v-else-if="activeSection === 'runtime'" :runtime="runtime" />
+          <MaintenanceToolsPanel v-else :runtime="runtime" />
         </div>
-        <div class="hero-actions">
-          <button class="action-button action-button--ghost" type="button" @click="refreshAll">
-            <RefreshCw :size="16" />
-            <span>刷新全部</span>
-          </button>
-        </div>
-      </header>
-
-      <section class="summary-grid">
-        <article class="summary-card">
-          <div class="summary-icon">
-            <Users :size="18" />
-          </div>
-          <div>
-            <p class="summary-label">默认人设</p>
-            <strong>{{ studio.defaultPersona.value?.name ?? "加载中" }}</strong>
-            <p class="summary-meta">{{ studio.totalBoundGroups.value }} 个显式绑定群</p>
-          </div>
-        </article>
-
-        <article class="summary-card">
-          <div class="summary-icon">
-            <LayoutPanelLeft :size="18" />
-          </div>
-          <div>
-            <p class="summary-label">人设总数</p>
-            <strong>{{ studio.personas.value.length }}</strong>
-            <p class="summary-meta">{{ buildCacheSummary(studio.cacheStats.value) }}</p>
-          </div>
-        </article>
-
-        <article class="summary-card">
-          <div class="summary-icon">
-            <Activity :size="18" />
-          </div>
-          <div>
-            <p class="summary-label">运行状态</p>
-            <strong>{{ runtime.memoryEnabled.value ? "Memory On" : "Memory Off" }}</strong>
-            <p class="summary-meta">{{ runtime.tokenStats.value?.totalCalls ?? 0 }} 次模型调用</p>
-          </div>
-        </article>
-
-        <article class="summary-card">
-          <div class="summary-icon">
-            <Database :size="18" />
-          </div>
-          <div>
-            <p class="summary-label">Token 总量</p>
-            <strong>{{ totalTokens }}</strong>
-            <p class="summary-meta">今日 {{ runtime.todayTokens.value }} Tokens</p>
-          </div>
-        </article>
-      </section>
-
-      <nav class="console-nav" aria-label="Mio Console Sections">
-        <button
-          v-for="section in sections"
-          :key="section.id"
-          class="nav-chip"
-          :class="{ 'nav-chip--active': activeSection === section.id }"
-          type="button"
-          @click="activeSection = section.id"
-        >
-          <component :is="section.icon" :size="16" />
-          <span>{{ section.label }}</span>
-        </button>
-      </nav>
-
-      <section class="console-panel">
-        <PersonaStudioPanel v-if="activeSection === 'persona'" :studio="studio" />
-        <RuntimeOverviewPanel v-else-if="activeSection === 'runtime'" :runtime="runtime" />
-        <MaintenanceToolsPanel v-else :runtime="runtime" />
-      </section>
+      </main>
     </div>
   </k-layout>
 </template>
 
 <script lang="ts" setup>
 import { computed, onMounted, ref } from "vue";
-import {
-  Activity,
-  Database,
-  LayoutPanelLeft,
-  RefreshCw,
-  ShieldAlert,
-  Users,
-} from "lucide-vue-next";
-import { buildCacheSummary } from "./persona-ui";
+import { Plus, RefreshCw } from "lucide-vue-next";
+import { createConsoleSections, DEFAULT_CONSOLE_SECTION } from "./console-shell";
+import { useConfigStudio } from "./composables/use-config-studio";
 import { usePersonaStudio } from "./composables/use-persona-studio";
 import { useRuntimeConsole } from "./composables/use-runtime-console";
+import ConfigStudioPanel from "./components/config-studio-panel.vue";
+import ConsoleSidebar from "./components/console-sidebar.vue";
+import MaintenanceToolsPanel from "./components/maintenance-tools-panel.vue";
 import PersonaStudioPanel from "./components/persona-studio-panel.vue";
 import RuntimeOverviewPanel from "./components/runtime-overview-panel.vue";
-import MaintenanceToolsPanel from "./components/maintenance-tools-panel.vue";
 
+const config = useConfigStudio();
 const studio = usePersonaStudio();
 const runtime = useRuntimeConsole();
+const sections = createConsoleSections();
+const activeSection = ref(DEFAULT_CONSOLE_SECTION);
 
-const sections = [
-  { id: "persona", label: "Persona Studio", icon: LayoutPanelLeft },
-  { id: "runtime", label: "运行统计", icon: Activity },
-  { id: "maintenance", label: "维护工具", icon: ShieldAlert },
-] as const;
-
-const activeSection = ref<(typeof sections)[number]["id"]>("persona");
-
-const totalTokens = computed(() => {
-  const stats = runtime.tokenStats.value;
-  if (!stats) {
-    return "0";
-  }
-
-  return runtime.formatNumber(stats.totalPromptTokens + stats.totalCompletionTokens);
+const activeSectionMeta = computed(() => {
+  return sections.find((s) => s.id === activeSection.value) ?? sections[0];
 });
 
 async function refreshAll() {
-  await Promise.all([
-    studio.refreshStudio(),
-    runtime.refreshAll(),
-  ]);
+  await Promise.all([config.refresh(), studio.refreshStudio(), runtime.refreshAll()]);
 }
 
 onMounted(() => {
@@ -135,198 +73,239 @@ onMounted(() => {
 });
 </script>
 
-<style scoped>
-.mio-console {
-  --panel-bg: rgba(255, 255, 255, 0.92);
-  --panel-border: rgba(15, 23, 42, 0.08);
-  --text-strong: #0f172a;
-  --text-base: #334155;
-  --text-soft: #64748b;
-  --accent: #0f766e;
-  --accent-soft: rgba(15, 118, 110, 0.12);
-  --accent-strong: #115e59;
-  --danger: #be123c;
-  --danger-soft: rgba(190, 18, 60, 0.1);
-  --warning-soft: #fff7ed;
-  padding: 24px;
-  min-height: 100%;
-  background:
-    radial-gradient(circle at top left, rgba(15, 118, 110, 0.12), transparent 28%),
-    linear-gradient(180deg, #f5f7fb 0%, #eef2f9 100%);
-  color: var(--text-strong);
-  font-family: "Fira Sans", "Noto Sans SC", "PingFang SC", sans-serif;
+<style>
+.console-shell {
+  --c-accent: #0d9488;
+  --c-accent-hover: #0f766e;
+  --c-accent-active: #115e59;
+  --c-accent-soft: rgba(13, 148, 136, 0.08);
+  --c-accent-muted: rgba(13, 148, 136, 0.15);
+
+  --c-text: #1e293b;
+  --c-text-2: #475569;
+  --c-text-3: #64748b;
+  --c-text-4: #94a3b8;
+
+  --c-bg: #ffffff;
+  --c-bg-soft: #f8fafc;
+  --c-bg-muted: #f1f5f9;
+
+  --c-border: #e2e8f0;
+  --c-border-light: rgba(226, 232, 240, 0.6);
+
+  --c-danger: #e11d48;
+  --c-danger-hover: #be123c;
+  --c-danger-soft: rgba(225, 29, 72, 0.08);
+
+  --c-warning-soft: rgba(245, 158, 11, 0.08);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", "Noto Sans SC", "PingFang SC", sans-serif;
+  --font-mono: "Fira Code", "JetBrains Mono", "Menlo", monospace;
 }
 
-.console-hero {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 20px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent-strong);
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 700;
-}
-
-.console-hero h1 {
-  margin: 0;
-  font-family: "Fira Code", "JetBrains Mono", monospace;
-  font-size: 32px;
-  line-height: 1.1;
-}
-
-.hero-copy {
-  max-width: 760px;
-  margin: 12px 0 0;
-  line-height: 1.6;
-  color: var(--text-soft);
-}
-
-.hero-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
-}
-
-.summary-card,
-.console-panel {
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
-}
-
-.summary-card {
-  display: flex;
-  gap: 14px;
-  padding: 18px;
-}
-
-.summary-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
+.console-shell .btn {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--c-text-2);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 150ms, border-color 150ms, color 150ms, box-shadow 150ms;
+}
+.console-shell .btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.console-shell .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.console-shell .btn:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 1px;
+}
+
+.console-shell .btn--primary {
+  background: var(--c-accent);
+  border-color: var(--c-accent);
+  color: #fff;
+}
+.console-shell .btn--primary:hover:not(:disabled) {
+  background: var(--c-accent-hover);
+  border-color: var(--c-accent-hover);
+}
+
+.console-shell .btn--ghost {
+  background: var(--c-bg-soft);
+  border-color: var(--c-border);
+  color: var(--c-text-2);
+}
+.console-shell .btn--ghost:hover:not(:disabled) {
+  background: var(--c-bg-muted);
+  color: var(--c-text);
+}
+
+.console-shell .btn--danger {
+  background: var(--c-danger);
+  border-color: var(--c-danger);
+  color: #fff;
+}
+.console-shell .btn--danger:hover:not(:disabled) {
+  background: var(--c-danger-hover);
+  border-color: var(--c-danger-hover);
+}
+
+.console-shell .btn--subtle {
+  padding: 4px 8px;
+  color: var(--c-text-3);
+  font-size: 12px;
+}
+.console-shell .btn--subtle:hover:not(:disabled) {
+  background: var(--c-bg-muted);
+  color: var(--c-text-2);
+}
+
+.console-shell .form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--c-text-3);
+  margin-bottom: 6px;
+}
+.console-shell .form-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+.console-shell .form-input:focus {
+  border-color: var(--c-accent);
+  box-shadow: 0 0 0 3px var(--c-accent-soft);
+}
+.console-shell .form-input::placeholder {
+  color: var(--c-text-4);
+}
+.console-shell textarea.form-input {
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.console-shell .empty-state {
+  display: flex;
+  align-items: center;
   justify-content: center;
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+  min-height: 100px;
+  padding: 16px;
+  text-align: center;
+  color: var(--c-text-4);
+  font-size: 13px;
+  border: 1px dashed var(--c-border);
+  border-radius: var(--radius-md);
+}
+.console-shell .empty-state--sm {
+  min-height: 56px;
+}
+</style>
+
+<style scoped>
+.console-shell {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  height: calc(100vh - 32px);
+  min-height: 0;
+  overflow: hidden;
+  background: var(--c-bg-soft);
+  color: var(--c-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-bg);
   flex-shrink: 0;
 }
 
-.summary-label {
-  margin: 0 0 8px;
+.workspace-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--c-text);
+}
+
+.workspace-desc {
+  margin: 2px 0 0;
   font-size: 12px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-soft);
+  color: var(--c-text-3);
 }
 
-.summary-card strong {
-  display: block;
-  font-size: 24px;
-  line-height: 1.1;
-}
-
-.summary-meta {
-  margin: 8px 0 0;
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-soft);
-}
-
-.console-nav {
+.workspace-actions {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 16px;
-}
-
-.nav-chip,
-.action-button {
-  display: inline-flex;
-  align-items: center;
   gap: 8px;
-  padding: 11px 14px;
-  border-radius: 12px;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  font-weight: 700;
-  transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+  flex-shrink: 0;
 }
 
-.nav-chip {
-  background: rgba(255, 255, 255, 0.72);
-  color: var(--text-base);
+.workspace-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
 }
 
-.nav-chip:hover,
-.nav-chip:focus-visible {
-  background: rgba(15, 118, 110, 0.12);
-  color: var(--accent-strong);
-  outline: none;
-}
-
-.nav-chip--active {
-  background: var(--accent);
-  color: #ffffff;
-  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.2);
-}
-
-.console-panel {
-  padding: 18px;
-}
-
-.action-button--ghost {
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--text-base);
-}
-
-.action-button--ghost:hover,
-.action-button--ghost:focus-visible {
-  background: rgba(15, 118, 110, 0.12);
-  color: var(--accent-strong);
-  outline: none;
-}
-
-@media (max-width: 1180px) {
-  .summary-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 820px) {
-  .mio-console {
-    padding: 16px;
-  }
-
-  .console-hero {
-    flex-direction: column;
-  }
-
-  .summary-grid {
+@media (max-width: 960px) {
+  .console-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+  .workspace {
+    overflow: visible;
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .nav-chip,
-  .action-button {
-    transition: none;
+@media (max-width: 720px) {
+  .workspace-header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 12px 16px;
   }
 }
 </style>

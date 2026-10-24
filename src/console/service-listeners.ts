@@ -1,11 +1,37 @@
-import * as path from "path";
 import { Context } from "koishi";
-import { MemoryService } from "./memory";
-import { tokenTracker } from "./llm/token-tracker";
-import { PersonaService } from "./persona/service";
-import { GeminiCacheManager } from "./llm/gemini-cache";
+import { MemoryService } from "../memory";
+import { tokenTracker, TokenStats } from "../llm/token-tracker";
+import { PersonaService } from "../persona/service";
+import { GeminiCacheManager } from "../llm/gemini-cache";
 
-export function registerConsoleListeners(
+declare module "@koishijs/plugin-console" {
+  interface Events {
+    "mio/memory-stats"(): Promise<{
+      enabled: boolean;
+      episodic: { active: number; archived: number };
+      relational: number;
+      semantic: number;
+    }>;
+    "mio/trigger-distillation"(): Promise<string>;
+    "mio/flush-memory"(): Promise<string>;
+    "mio/migrate-participants"(): Promise<string>;
+    "mio/token-stats"(): Promise<TokenStats>;
+    "mio/token-stats-reset"(): Promise<string>;
+    "mio/persona-list"(): Promise<any[]>;
+    "mio/persona-get"(personaId: string): Promise<any>;
+    "mio/persona-create"(input: { name: string; content: string }): Promise<any>;
+    "mio/persona-duplicate"(personaId: string): Promise<any>;
+    "mio/persona-rename"(input: { personaId: string; name: string }): Promise<any>;
+    "mio/persona-save"(input: { personaId: string; content: string }): Promise<any>;
+    "mio/persona-delete"(personaId: string): Promise<any>;
+    "mio/persona-set-default"(personaId: string): Promise<any>;
+    "mio/persona-bind-group"(input: { groupId: string; personaId: string }): Promise<any>;
+    "mio/persona-unbind-group"(groupId: string): Promise<any>;
+    "mio/persona-cache-stats"(): Promise<any>;
+  }
+}
+
+export function registerServiceListeners(
   ctx: Context,
   logger: any,
   memory: MemoryService | null,
@@ -13,11 +39,6 @@ export function registerConsoleListeners(
   geminiCacheManager?: GeminiCacheManager | null,
 ): void {
   ctx.inject(["console"], (ctx) => {
-    ctx.console.addEntry({
-      dev: path.resolve(__dirname, "../client/index.ts"),
-      prod: path.resolve(__dirname, "../dist"),
-    });
-
     ctx.console.addListener("mio/memory-stats", async () => {
       if (!memory) {
         return {

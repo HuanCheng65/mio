@@ -26,6 +26,16 @@ interface BufferedUsage extends ModelUsage {
   purposeStats: PurposeUsageMap
 }
 
+export interface TokenUsageDetail {
+  date: string
+  model: string
+  purpose: string
+  promptTokens: number
+  completionTokens: number
+  cachedTokens: number
+  calls: number
+}
+
 export interface TokenStats {
   totalPromptTokens: number
   totalCompletionTokens: number
@@ -34,6 +44,7 @@ export interface TokenStats {
   byModel: Record<string, ModelUsage>
   byDate: Record<string, { promptTokens: number; completionTokens: number; cachedTokens: number; calls: number }>
   byPurpose: PurposeUsageMap
+  detail: TokenUsageDetail[]
 }
 
 function today(): string {
@@ -181,6 +192,7 @@ export class TokenTracker {
         byModel: {},
         byDate: {},
         byPurpose: {},
+        detail: [],
       }
     }
 
@@ -213,7 +225,29 @@ export class TokenTracker {
       }
     }
 
-    return { totalPromptTokens, totalCompletionTokens, totalCachedTokens, totalCalls, byModel, byDate, byPurpose }
+    const detail: TokenUsageDetail[] = []
+    for (const row of rows) {
+      const purposes = normalizePurposeStats(row)
+      for (const [purpose, usage] of Object.entries(purposes)) {
+        detail.push({
+          date: row.date,
+          model: row.model,
+          purpose,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          cachedTokens: usage.cachedTokens,
+          calls: usage.calls,
+        })
+      }
+    }
+
+    detail.sort((a, b) => {
+      if (a.date !== b.date) return b.date.localeCompare(a.date)
+      if (a.model !== b.model) return a.model.localeCompare(b.model)
+      return a.purpose.localeCompare(b.purpose)
+    })
+
+    return { totalPromptTokens, totalCompletionTokens, totalCachedTokens, totalCalls, byModel, byDate, byPurpose, detail }
   }
 
   async reset() {

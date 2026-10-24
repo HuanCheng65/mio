@@ -1,44 +1,28 @@
 <template>
   <div class="persona-pane">
-    <div class="persona-pane__actions">
-      <button class="action-button action-button--ghost" type="button" @click="refreshStudio()" :disabled="loading.refresh">
-        <RefreshCw :size="16" />
-        <span>{{ loading.refresh ? "刷新中" : "刷新人设数据" }}</span>
-      </button>
-      <button class="action-button action-button--primary" type="button" @click="openCreateDialog">
-        <Plus :size="16" />
-        <span>创建人设</span>
-      </button>
-    </div>
-
     <div class="studio-grid">
-      <k-card class="panel panel--list">
-        <div class="panel-heading">
-          <div>
-            <p class="panel-eyebrow">Persona Index</p>
-            <h2>人设列表</h2>
-          </div>
-          <span class="count-pill">{{ filteredPersonas.length }}</span>
+      <div class="panel panel--list">
+        <div class="panel-header">
+          <h2 class="panel-title">人设列表</h2>
+          <span class="badge">{{ filteredPersonas.length }}</span>
         </div>
 
-        <label class="field">
-          <span class="field-label">搜索人设</span>
-          <div class="search-shell">
-            <Search :size="16" />
-            <input
-              v-model.trim="searchQuery"
-              type="search"
-              placeholder="按名称或 ID 搜索"
-              aria-label="搜索人设"
-            />
-          </div>
-        </label>
+        <div class="search-box">
+          <Search :size="14" class="search-icon" />
+          <input
+            v-model.trim="searchQuery"
+            class="form-input search-input"
+            type="search"
+            placeholder="搜索名称或 ID"
+            aria-label="搜索人设"
+          />
+        </div>
 
         <div v-if="loading.refresh && personas.length === 0" class="empty-state">
-          正在加载人设列表...
+          正在加载...
         </div>
         <div v-else-if="filteredPersonas.length === 0" class="empty-state">
-          没有匹配的人设，试试别的关键词。
+          没有匹配的人设
         </div>
         <div v-else class="persona-list">
           <button
@@ -50,261 +34,238 @@
             type="button"
             @click="requestPersonaSelection(persona.id)"
           >
-            <div class="persona-row__title">
+            <div class="persona-row__head">
               <strong>{{ persona.name }}</strong>
-              <span v-for="badge in summarizePersonaRow(persona).badges" :key="badge" class="mini-badge">
-                {{ badge }}
-              </span>
+              <span v-for="badge in summarizePersonaRow(persona).badges" :key="badge" class="tag">{{ badge }}</span>
             </div>
-            <p class="persona-row__meta">{{ summarizePersonaRow(persona).meta }}</p>
-            <p class="persona-row__id">{{ persona.id }}</p>
+            <span class="persona-row__meta">{{ summarizePersonaRow(persona).meta }}</span>
+            <span class="persona-row__id">{{ persona.id }}</span>
           </button>
         </div>
-      </k-card>
+      </div>
 
-      <k-card class="panel panel--editor">
+      <div class="panel panel--editor">
         <div v-if="selectedPersona" class="editor-shell">
-          <div class="panel-heading panel-heading--spread">
-            <div>
-              <p class="panel-eyebrow">Editor</p>
-              <h2>{{ selectedPersona.name }}</h2>
-            </div>
-            <span class="status-pill" :class="`status-pill--${saveState}`">{{ saveStateText }}</span>
+          <div class="panel-header">
+            <h2 class="panel-title">{{ selectedPersona.name }}</h2>
+            <span class="status-badge" :class="`status-badge--${saveState}`">{{ saveStateText }}</span>
           </div>
 
-          <div class="editor-actions">
-            <button class="action-button action-button--ghost" type="button" @click="duplicateSelected" :disabled="busyAction || !selectedPersonaId">
-              <Copy :size="16" />
+          <div class="editor-toolbar">
+            <button class="btn btn--ghost" type="button" @click="duplicateSelected" :disabled="busyAction || !selectedPersonaId">
+              <Copy :size="14" />
               <span>复制</span>
             </button>
-            <button class="action-button action-button--ghost" type="button" @click="openRenameDialog" :disabled="busyAction || !selectedPersonaId">
-              <PencilLine :size="16" />
+            <button class="btn btn--ghost" type="button" @click="openRenameDialog" :disabled="busyAction || !selectedPersonaId">
+              <PencilLine :size="14" />
               <span>重命名</span>
             </button>
             <button
-              class="action-button action-button--ghost"
+              class="btn btn--ghost"
               type="button"
               @click="setSelectedAsDefault"
               :disabled="busyAction || !selectedPersonaId || selectedPersona.isDefault"
             >
-              <Star :size="16" />
+              <Star :size="14" />
               <span>{{ selectedPersona.isDefault ? "当前默认" : "设为默认" }}</span>
             </button>
+            <span class="toolbar-spacer" />
             <button
-              class="action-button action-button--primary"
+              class="btn btn--primary"
               type="button"
               @click="saveSelectedPersona"
               :disabled="busyAction || !isDirty || !selectedPersonaId"
             >
-              <Save :size="16" />
-              <span>{{ saveState === "saving" ? "保存中" : "保存内容" }}</span>
+              <Save :size="14" />
+              <span>{{ saveState === "saving" ? "保存中" : "保存" }}</span>
             </button>
           </div>
 
-          <label class="field field--grow">
-            <span class="field-label">Persona Markdown</span>
+          <div class="editor-area">
             <textarea
               v-model="draftContent"
-              class="editor-textarea"
+              class="form-input editor-textarea"
               spellcheck="false"
-              aria-label="人设 Markdown 编辑器"
-              placeholder="在这里编辑完整人设内容"
+              aria-label="人设内容编辑器"
+              placeholder="在这里编辑人设内容"
             />
-          </label>
+          </div>
 
           <div class="editor-footer">
             <span>{{ draftContent.length }} 字符</span>
-            <span>最后更新 {{ formatDateTime(selectedPersona.updatedAt) }}</span>
+            <span>更新于 {{ formatDateTime(selectedPersona.updatedAt) }}</span>
           </div>
         </div>
         <div v-else class="empty-state">
-          当前没有可编辑的人设。
+          选择一个人设开始编辑
         </div>
-      </k-card>
+      </div>
 
-      <k-card class="panel panel--inspector">
+      <div class="panel panel--inspector">
         <div v-if="selectedPersona" class="inspector-shell">
-          <div class="panel-heading">
-            <div>
-              <p class="panel-eyebrow">Inspector</p>
-              <h2>检查器</h2>
-            </div>
-            <span class="count-pill">{{ currentPersonaCacheCount }}</span>
+          <div class="panel-header">
+            <h2 class="panel-title">详情</h2>
+            <span class="badge">{{ currentPersonaCacheCount }} 缓存</span>
           </div>
 
-          <dl class="meta-grid">
-            <div>
+          <dl class="meta-list">
+            <div class="meta-item">
               <dt>ID</dt>
-              <dd>{{ selectedPersona.id }}</dd>
+              <dd class="mono">{{ selectedPersona.id }}</dd>
             </div>
-            <div>
+            <div class="meta-item">
               <dt>内容哈希</dt>
-              <dd>{{ selectedPersona.contentHash }}</dd>
+              <dd class="mono">{{ selectedPersona.contentHash }}</dd>
             </div>
-            <div>
-              <dt>缓存条目</dt>
-              <dd>{{ currentPersonaCacheCount }}</dd>
-            </div>
-            <div>
+            <div class="meta-item">
               <dt>更新时间</dt>
               <dd>{{ formatDateTime(selectedPersona.updatedAt) }}</dd>
             </div>
           </dl>
 
-          <section class="binding-card">
-            <div class="section-title">
-              <Link2 :size="16" />
+          <section class="section-card">
+            <div class="section-header">
+              <Link2 :size="14" />
               <h3>群绑定</h3>
             </div>
-            <p class="section-copy">输入群号即可把它切到当前人设；解绑后会自动回退默认人设。</p>
+            <p class="section-desc">绑定群到当前人设，解绑后回退到默认。</p>
 
-            <label class="field">
-              <span class="field-label">绑定群号</span>
-              <div class="inline-form">
-                <input
-                  v-model.trim="bindGroupId"
-                  type="text"
-                  inputmode="numeric"
-                  placeholder="例如 123456789"
-                  aria-label="绑定群号"
-                />
-                <button class="action-button action-button--ghost" type="button" @click="bindCurrentGroup" :disabled="busyAction || !bindGroupId">
-                  绑定
-                </button>
-              </div>
-            </label>
+            <div class="bind-form">
+              <input
+                v-model.trim="bindGroupId"
+                class="form-input"
+                type="text"
+                inputmode="numeric"
+                placeholder="输入群号"
+                aria-label="绑定群号"
+              />
+              <button class="btn btn--ghost" type="button" @click="bindCurrentGroup" :disabled="busyAction || !bindGroupId">
+                绑定
+              </button>
+            </div>
 
-            <div v-if="selectedPersona.boundGroupIds.length === 0" class="empty-state empty-state--compact">
-              还没有显式绑定群。
+            <div v-if="selectedPersona.boundGroupIds.length === 0" class="empty-state empty-state--sm">
+              暂无绑定
             </div>
             <ul v-else class="group-list">
-              <li v-for="groupId in selectedPersona.boundGroupIds" :key="groupId" class="group-row">
-                <span>{{ groupId }}</span>
-                <button
-                  class="action-button action-button--subtle"
-                  type="button"
-                  @click="unbindGroup(groupId)"
-                  :disabled="busyAction"
-                >
-                  <Unlink2 :size="14" />
+              <li v-for="groupId in selectedPersona.boundGroupIds" :key="groupId" class="group-item">
+                <span class="mono">{{ groupId }}</span>
+                <button class="btn btn--subtle" type="button" @click="unbindGroup(groupId)" :disabled="busyAction">
+                  <Unlink2 :size="12" />
                   <span>解绑</span>
                 </button>
               </li>
             </ul>
           </section>
 
-          <section class="danger-card">
-            <div class="section-title section-title--danger">
-              <ShieldAlert :size="16" />
+          <section class="section-card section-card--danger">
+            <div class="section-header section-header--danger">
+              <ShieldAlert :size="14" />
               <h3>危险操作</h3>
             </div>
-            <p class="section-copy">
-              {{ buildDeletePersonaWarning(selectedPersona.name, selectedPersona.boundGroupIds) }}
-            </p>
+            <p class="section-desc">{{ buildDeletePersonaWarning(selectedPersona.name, selectedPersona.boundGroupIds) }}</p>
             <button
-              class="action-button action-button--danger"
+              class="btn btn--danger"
               type="button"
               @click="showDeleteDialog = true"
               :disabled="busyAction || selectedPersona.isDefault"
             >
-              <Trash2 :size="16" />
-              <span>{{ selectedPersona.isDefault ? "默认人设不可删除" : "删除当前人设" }}</span>
+              <Trash2 :size="14" />
+              <span>{{ selectedPersona.isDefault ? "默认人设不可删除" : "删除人设" }}</span>
             </button>
           </section>
         </div>
         <div v-else class="empty-state">
-          选中一个人设后，这里会显示元数据、绑定和删除预警。
+          选择人设查看详情
         </div>
-      </k-card>
+      </div>
     </div>
 
-    <div v-if="showCreateModal" class="modal-backdrop" @click.self="closeCreateDialog">
-      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="create-persona-title">
+    <div v-if="showCreateModal" class="modal-overlay" @click.self="closeCreateDialog">
+      <section class="modal-box" role="dialog" aria-modal="true" aria-labelledby="create-title">
         <div class="modal-header">
-          <h2 id="create-persona-title">创建新的人设</h2>
-          <button class="icon-button" type="button" aria-label="关闭创建人设窗口" @click="closeCreateDialog">
+          <h2 id="create-title">新建人设</h2>
+          <button class="btn btn--subtle" type="button" aria-label="关闭" @click="closeCreateDialog">
             <X :size="16" />
           </button>
         </div>
-
-        <label class="field">
-          <span class="field-label">名称</span>
-          <input v-model.trim="createDraft.name" type="text" maxlength="40" placeholder="例如 澪-alt" />
-        </label>
-
-        <label class="field">
-          <span class="field-label">初始内容</span>
-          <textarea v-model="createDraft.content" class="modal-textarea" spellcheck="false" />
-        </label>
-
-        <div class="modal-actions">
-          <button class="action-button action-button--ghost" type="button" @click="closeCreateDialog">取消</button>
-          <button class="action-button action-button--primary" type="button" @click="createPersona" :disabled="busyAction || !createDraft.name">
+        <div class="modal-body">
+          <div class="form-group">
+            <span class="form-label">名称</span>
+            <input v-model.trim="createDraft.name" class="form-input" type="text" maxlength="40" placeholder="例如 澪-alt" />
+          </div>
+          <div class="form-group">
+            <span class="form-label">初始内容</span>
+            <textarea v-model="createDraft.content" class="form-input modal-textarea" spellcheck="false" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn--ghost" type="button" @click="closeCreateDialog">取消</button>
+          <button class="btn btn--primary" type="button" @click="createPersona" :disabled="busyAction || !createDraft.name">
             {{ loading.create ? "创建中" : "创建" }}
           </button>
         </div>
       </section>
     </div>
 
-    <div v-if="showRenameModal" class="modal-backdrop" @click.self="closeRenameDialog">
-      <section class="modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="rename-persona-title">
+    <div v-if="showRenameModal" class="modal-overlay" @click.self="closeRenameDialog">
+      <section class="modal-box modal-box--sm" role="dialog" aria-modal="true" aria-labelledby="rename-title">
         <div class="modal-header">
-          <h2 id="rename-persona-title">重命名人设</h2>
-          <button class="icon-button" type="button" aria-label="关闭重命名窗口" @click="closeRenameDialog">
+          <h2 id="rename-title">重命名</h2>
+          <button class="btn btn--subtle" type="button" aria-label="关闭" @click="closeRenameDialog">
             <X :size="16" />
           </button>
         </div>
-
-        <label class="field">
-          <span class="field-label">新名称</span>
-          <input v-model.trim="renameDraft" type="text" maxlength="40" />
-        </label>
-
-        <div class="modal-actions">
-          <button class="action-button action-button--ghost" type="button" @click="closeRenameDialog">取消</button>
-          <button class="action-button action-button--primary" type="button" @click="renameSelectedPersona" :disabled="busyAction || !renameDraft">
-            {{ loading.rename ? "保存中" : "保存名称" }}
+        <div class="modal-body">
+          <div class="form-group">
+            <span class="form-label">新名称</span>
+            <input v-model.trim="renameDraft" class="form-input" type="text" maxlength="40" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn--ghost" type="button" @click="closeRenameDialog">取消</button>
+          <button class="btn btn--primary" type="button" @click="renameSelectedPersona" :disabled="busyAction || !renameDraft">
+            {{ loading.rename ? "保存中" : "确认" }}
           </button>
         </div>
       </section>
     </div>
 
-    <div v-if="showDiscardDialog" class="modal-backdrop" @click.self="cancelPendingSelection">
-      <section class="modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="discard-changes-title">
+    <div v-if="showDiscardDialog" class="modal-overlay" @click.self="cancelPendingSelection">
+      <section class="modal-box modal-box--sm" role="dialog" aria-modal="true" aria-labelledby="discard-title">
         <div class="modal-header">
-          <h2 id="discard-changes-title">放弃未保存改动？</h2>
-          <button class="icon-button" type="button" aria-label="关闭切换确认窗口" @click="cancelPendingSelection">
+          <h2 id="discard-title">放弃修改？</h2>
+          <button class="btn btn--subtle" type="button" aria-label="关闭" @click="cancelPendingSelection">
             <X :size="16" />
           </button>
         </div>
-
-        <p class="dialog-copy">你有未保存的内容。继续切换会丢失这次编辑草稿。</p>
-
-        <div class="modal-actions">
-          <button class="action-button action-button--ghost" type="button" @click="cancelPendingSelection">继续编辑</button>
-          <button class="action-button action-button--danger" type="button" @click="confirmPendingSelection">放弃并切换</button>
+        <div class="modal-body">
+          <p class="modal-desc">切换人设会丢失当前未保存的编辑。</p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn--ghost" type="button" @click="cancelPendingSelection">继续编辑</button>
+          <button class="btn btn--danger" type="button" @click="confirmPendingSelection">放弃并切换</button>
         </div>
       </section>
     </div>
 
-    <div v-if="showDeleteDialog && selectedPersona" class="modal-backdrop" @click.self="showDeleteDialog = false">
-      <section class="modal-card modal-card--compact" role="dialog" aria-modal="true" aria-labelledby="delete-persona-title">
+    <div v-if="showDeleteDialog && selectedPersona" class="modal-overlay" @click.self="showDeleteDialog = false">
+      <section class="modal-box modal-box--sm" role="dialog" aria-modal="true" aria-labelledby="delete-title">
         <div class="modal-header">
-          <h2 id="delete-persona-title">确认删除人设</h2>
-          <button class="icon-button" type="button" aria-label="关闭删除确认窗口" @click="showDeleteDialog = false">
+          <h2 id="delete-title">确认删除</h2>
+          <button class="btn btn--subtle" type="button" aria-label="关闭" @click="showDeleteDialog = false">
             <X :size="16" />
           </button>
         </div>
-
-        <p class="dialog-copy">{{ buildDeletePersonaWarning(selectedPersona.name, selectedPersona.boundGroupIds) }}</p>
-
-        <div v-if="selectedPersona.boundGroupIds.length > 0" class="impact-list">
-          <span v-for="groupId in selectedPersona.boundGroupIds" :key="groupId" class="impact-pill">{{ groupId }}</span>
+        <div class="modal-body">
+          <p class="modal-desc">{{ buildDeletePersonaWarning(selectedPersona.name, selectedPersona.boundGroupIds) }}</p>
+          <div v-if="selectedPersona.boundGroupIds.length > 0" class="impact-tags">
+            <span v-for="groupId in selectedPersona.boundGroupIds" :key="groupId" class="impact-tag">{{ groupId }}</span>
+          </div>
         </div>
-
-        <div class="modal-actions">
-          <button class="action-button action-button--ghost" type="button" @click="showDeleteDialog = false">取消</button>
-          <button class="action-button action-button--danger" type="button" @click="deleteSelectedPersona" :disabled="busyAction">
+        <div class="modal-footer">
+          <button class="btn btn--ghost" type="button" @click="showDeleteDialog = false">取消</button>
+          <button class="btn btn--danger" type="button" @click="deleteSelectedPersona" :disabled="busyAction">
             {{ loading.delete ? "删除中" : "确认删除" }}
           </button>
         </div>
@@ -318,8 +279,6 @@ import {
   Copy,
   Link2,
   PencilLine,
-  Plus,
-  RefreshCw,
   Save,
   Search,
   ShieldAlert,
@@ -355,11 +314,9 @@ const {
   showRenameModal,
   showDiscardDialog,
   showDeleteDialog,
-  refreshStudio,
   requestPersonaSelection,
   confirmPendingSelection,
   cancelPendingSelection,
-  openCreateDialog,
   closeCreateDialog,
   createPersona,
   openRenameDialog,
@@ -378,530 +335,428 @@ const {
 .persona-pane {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.persona-pane__actions,
-.editor-actions,
-.modal-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  min-height: 0;
+  flex: 1;
 }
 
 .studio-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr) minmax(280px, 320px);
+  grid-template-columns: 240px minmax(0, 1fr) 300px;
   gap: 16px;
-  align-items: start;
+  flex: 1;
+  min-height: 0;
 }
 
 .panel {
-  padding: 18px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
-}
-
-.panel--editor,
-.panel--inspector,
-.panel--list {
-  min-height: 720px;
-}
-
-.panel-heading {
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
-.panel-heading--spread {
-  align-items: center;
-}
-
-.panel-eyebrow {
-  margin: 0 0 8px;
-  color: var(--accent-strong);
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  font-weight: 700;
-}
-
-.panel-heading h2,
-.modal-header h2 {
+.panel-title {
   margin: 0;
-  font-family: "Fira Code", "JetBrains Mono", monospace;
-  font-size: 24px;
-  line-height: 1.15;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--c-text);
 }
 
-.count-pill,
-.mini-badge,
-.status-pill,
-.impact-pill {
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--c-bg-muted);
+  color: var(--c-text-3);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
-.count-pill {
-  min-width: 34px;
-  padding: 7px 10px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--text-base);
+.tag {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--c-accent-soft);
+  color: var(--c-accent-active);
+  font-size: 11px;
+  font-weight: 600;
 }
 
-.status-pill {
-  padding: 8px 12px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--text-base);
+.status-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--c-bg-muted);
+  color: var(--c-text-3);
 }
 
-.status-pill--dirty {
-  background: rgba(245, 158, 11, 0.12);
+.status-badge--dirty {
+  background: rgba(245, 158, 11, 0.1);
   color: #b45309;
 }
 
-.status-pill--saving {
-  background: var(--accent-soft);
-  color: var(--accent-strong);
+.status-badge--saving {
+  background: var(--c-accent-soft);
+  color: var(--c-accent-hover);
 }
 
-.status-pill--failed {
-  background: var(--danger-soft);
-  color: var(--danger);
+.status-badge--failed {
+  background: var(--c-danger-soft);
+  color: var(--c-danger);
 }
 
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+/* Search */
+.search-box {
+  position: relative;
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
-.field--grow {
-  flex: 1;
+.search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--c-text-4);
+  pointer-events: none;
 }
 
-.field-label {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-soft);
+.search-input {
+  padding-left: 30px;
 }
 
-.search-shell,
-.inline-form,
-.field input,
-.modal-textarea,
-.editor-textarea {
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.96);
-}
-
-.search-shell {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-}
-
-.search-shell input,
-.inline-form input,
-.field input {
-  width: 100%;
-  border: none;
-  background: transparent;
-  color: var(--text-strong);
-  padding: 12px 0;
-  outline: none;
-  font: inherit;
-}
-
+/* Persona list */
 .persona-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  max-height: 640px;
-  overflow: auto;
-  padding-right: 2px;
+  gap: 2px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .persona-row {
   width: 100%;
   text-align: left;
-  padding: 14px;
-  border-radius: 16px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.72);
-  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  font: inherit;
   cursor: pointer;
+  transition: background 150ms, border-color 150ms;
 }
 
-.persona-row:hover,
-.persona-row:focus-visible {
-  border-color: rgba(15, 118, 110, 0.35);
-  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.12);
-  outline: none;
+.persona-row:hover {
+  background: var(--c-bg-muted);
 }
 
 .persona-row--active {
-  border-color: rgba(15, 118, 110, 0.45);
-  background: rgba(240, 253, 250, 0.95);
+  background: var(--c-accent-soft);
+  border-color: var(--c-accent-muted);
 }
 
-.persona-row__title {
+.persona-row__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-.persona-row__meta,
-.persona-row__id,
-.editor-footer,
-.section-copy,
-.dialog-copy {
-  color: var(--text-soft);
-}
-
-.persona-row__meta,
-.persona-row__id {
-  margin: 8px 0 0;
+.persona-row__head strong {
   font-size: 13px;
-  line-height: 1.5;
+  font-weight: 600;
+  color: var(--c-text);
+}
+
+.persona-row__meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--c-text-4);
 }
 
 .persona-row__id {
-  font-family: "Fira Code", "JetBrains Mono", monospace;
-  font-size: 11px;
-  word-break: break-all;
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--c-text-4);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.mini-badge {
-  padding: 4px 8px;
-  background: rgba(15, 118, 110, 0.1);
-  color: var(--accent-strong);
-}
-
-.editor-shell,
-.inspector-shell {
+/* Editor */
+.editor-shell {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
   height: 100%;
+  min-height: 0;
 }
 
-.editor-textarea,
-.modal-textarea {
-  width: 100%;
-  min-height: 480px;
-  resize: vertical;
-  padding: 16px;
-  font: 500 14px/1.65 "Fira Code", "JetBrains Mono", monospace;
-  color: var(--text-strong);
-  outline: none;
+.editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.modal-textarea {
-  min-height: 180px;
+.toolbar-spacer {
+  flex: 1;
+}
+
+.editor-area {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.editor-textarea {
+  flex: 1;
+  min-height: 200px;
+  resize: none;
 }
 
 .editor-footer {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 12px;
+  font-size: 11px;
+  color: var(--c-text-4);
+  flex-shrink: 0;
 }
 
-.meta-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+/* Inspector */
+.inspector-shell {
+  display: flex;
+  flex-direction: column;
   gap: 12px;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.meta-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   margin: 0;
 }
 
-.meta-grid div {
-  padding: 12px;
-  border-radius: 14px;
-  background: rgba(248, 250, 252, 0.92);
+.meta-item {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--c-bg-soft);
 }
 
-.meta-grid dt {
-  color: var(--text-soft);
-  font-size: 12px;
+.meta-item dt {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--c-text-4);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-bottom: 6px;
+  letter-spacing: 0.03em;
+  margin-bottom: 2px;
 }
 
-.meta-grid dd {
+.meta-item dd {
   margin: 0;
-  color: var(--text-strong);
-  font-family: "Fira Code", "JetBrains Mono", monospace;
   font-size: 12px;
-  line-height: 1.6;
+  color: var(--c-text);
+  line-height: 1.5;
   word-break: break-all;
 }
 
-.binding-card,
-.danger-card {
-  padding: 16px;
-  border-radius: 16px;
-  background: rgba(248, 250, 252, 0.92);
-  border: 1px solid rgba(15, 23, 42, 0.08);
+.mono {
+  font-family: var(--font-mono);
 }
 
-.danger-card {
-  background: var(--warning-soft);
-  border-color: rgba(190, 18, 60, 0.12);
+.section-card {
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--c-bg-soft);
+  border: 1px solid var(--c-border-light);
 }
 
-.section-title {
+.section-card--danger {
+  background: var(--c-danger-soft);
+  border-color: rgba(225, 29, 72, 0.15);
+}
+
+.section-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 10px;
-  color: var(--text-strong);
+  gap: 6px;
+  margin-bottom: 6px;
+  color: var(--c-text);
 }
 
-.section-title h3 {
+.section-header h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: 13px;
+  font-weight: 600;
 }
 
-.section-title--danger {
-  color: var(--danger);
+.section-header--danger {
+  color: var(--c-danger);
 }
 
-.section-copy {
-  margin: 0 0 14px;
-  line-height: 1.6;
+.section-desc {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--c-text-3);
 }
 
-.inline-form {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 0 8px 0 14px;
+.bind-form {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
 .group-list {
   list-style: none;
   padding: 0;
-  margin: 14px 0 0;
+  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
 }
 
-.group-row {
+.group-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.88);
-  color: var(--text-base);
-  font-family: "Fira Code", "JetBrains Mono", monospace;
-}
-
-.empty-state {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 160px;
-  padding: 18px;
-  text-align: center;
-  border: 1px dashed rgba(15, 23, 42, 0.12);
-  border-radius: 16px;
-  color: var(--text-soft);
-  background: rgba(255, 255, 255, 0.56);
-}
-
-.empty-state--compact {
-  min-height: 88px;
-}
-
-.action-button,
-.icon-button {
-  border: none;
-  cursor: pointer;
-  transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
-}
-
-.action-button {
-  display: inline-flex;
-  align-items: center;
   gap: 8px;
-  padding: 11px 14px;
-  border-radius: 12px;
-  font: inherit;
-  font-weight: 700;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--c-bg);
+  font-size: 12px;
 }
 
-.action-button:disabled,
-.icon-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.action-button--primary {
-  background: var(--accent);
-  color: #ffffff;
-}
-
-.action-button--primary:hover:not(:disabled),
-.action-button--primary:focus-visible:not(:disabled) {
-  background: var(--accent-strong);
-  box-shadow: 0 8px 22px rgba(15, 118, 110, 0.2);
-  outline: none;
-}
-
-.action-button--ghost {
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--text-base);
-}
-
-.action-button--ghost:hover:not(:disabled),
-.action-button--ghost:focus-visible:not(:disabled),
-.action-button--subtle:hover:not(:disabled),
-.action-button--subtle:focus-visible:not(:disabled) {
-  background: rgba(15, 118, 110, 0.12);
-  color: var(--accent-strong);
-  outline: none;
-}
-
-.action-button--subtle {
-  background: transparent;
-  color: var(--text-soft);
-  padding: 8px 10px;
-}
-
-.action-button--danger {
-  background: var(--danger);
-  color: #ffffff;
-}
-
-.action-button--danger:hover:not(:disabled),
-.action-button--danger:focus-visible:not(:disabled) {
-  background: #9f1239;
-  box-shadow: 0 10px 24px rgba(190, 18, 60, 0.18);
-  outline: none;
-}
-
-.modal-backdrop {
+/* Modals */
+.modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
-  backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
-  z-index: 30;
+  z-index: 100;
 }
 
-.modal-card {
-  width: min(720px, 100%);
-  padding: 22px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 18px;
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
+.modal-box {
+  width: min(600px, 100%);
+  background: var(--c-bg);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-xl);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
 }
 
-.modal-card--compact {
-  width: min(480px, 100%);
+.modal-box--sm {
+  width: min(420px, 100%);
 }
 
 .modal-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 12px;
-  align-items: center;
-  margin-bottom: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--c-border);
 }
 
-.icon-button {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: rgba(15, 23, 42, 0.06);
-  color: var(--text-base);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+.modal-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
 }
 
-.icon-button:hover,
-.icon-button:focus-visible {
-  background: rgba(15, 118, 110, 0.12);
-  color: var(--accent-strong);
-  outline: none;
+.modal-body {
+  padding: 16px 20px;
 }
 
-.impact-list {
+.modal-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--c-text-2);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group + .form-group {
+  margin-top: 12px;
+}
+
+.modal-textarea {
+  min-height: 160px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--c-border);
+  background: var(--c-bg-soft);
+}
+
+.impact-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin: 16px 0 0;
+  gap: 6px;
+  margin-top: 10px;
 }
 
-.impact-pill {
-  padding: 7px 10px;
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--danger);
-  border: 1px solid rgba(190, 18, 60, 0.12);
+.impact-tag {
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--c-bg);
+  color: var(--c-danger);
+  border: 1px solid rgba(225, 29, 72, 0.15);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
-@media (max-width: 1180px) {
+@media (max-width: 1200px) {
   .studio-grid {
-    grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+    grid-template-columns: 220px minmax(0, 1fr);
   }
-
   .panel--inspector {
     grid-column: 1 / -1;
-    min-height: auto;
   }
 }
 
 @media (max-width: 820px) {
-  .studio-grid,
-  .meta-grid {
+  .studio-grid {
     grid-template-columns: 1fr;
   }
-
-  .panel--list,
-  .panel--editor,
-  .panel--inspector {
-    min-height: auto;
+  .editor-toolbar {
+    flex-wrap: wrap;
   }
-
   .editor-footer {
     flex-direction: column;
-  }
-
-  .inline-form {
-    grid-template-columns: 1fr;
-    padding: 10px 12px 12px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .persona-row,
-  .action-button,
-  .icon-button {
-    transition: none;
   }
 }
 </style>
