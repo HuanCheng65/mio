@@ -21,7 +21,6 @@ export interface OutwardDeps {
   delivery?: DeliveryOptions;
 }
 
-const SHADOW = "（影子模式：没有真的发出去）";
 const MAX_STICKER_BYTES = 2 * 1024 * 1024;
 
 async function findMessage(events: EventStore, groupId: string, ref: unknown): Promise<MioEventRow | string> {
@@ -89,7 +88,7 @@ export function createSayTool(deps: OutwardDeps): AgentTool {
 
       if (ctx.shadow) {
         deps.outbox.recordSent(ctx.groupId, []);
-        return SHADOW;
+        return "发出去了";
       }
       const session = deps.outbox.latestSession(ctx.groupId);
       if (!session) return "现在没有可以挂靠回复的消息（重启后还没人说过话），这次发不出去";
@@ -124,7 +123,7 @@ export function createReactTool(deps: OutwardDeps): AgentTool {
       if (typeof target === "string") return target;
       const emoji = findEmoji(String(args.emoji ?? ""), { allowedNames: ALLOWED_REACT_EMOJI_NAMES, maxDistance: 0 });
       if (!emoji) return `不能用"${args.emoji}"，能用的是：${ALLOWED_REACT_EMOJI_NAMES.join("、")}`;
-      if (ctx.shadow) return SHADOW;
+      if (ctx.shadow) return `给 m${target.seq} 点了${emoji.name}`;
       const session = deps.outbox.latestSession(ctx.groupId);
       if (!session) return "现在没有可用的会话，这次点不了";
       await setMsgEmojiLike(session, target.platformMessageId, emoji.id);
@@ -157,7 +156,7 @@ export function createStickerTool(deps: OutwardDeps & { stickers: StickerFinder 
 
       if (ctx.shadow) {
         deps.outbox.recordSent(ctx.groupId, []);
-        return `${SHADOW}：${found.description}`;
+        return `发了：${found.description}`;
       }
       const session = deps.outbox.latestSession(ctx.groupId);
       if (!session) return "现在没有可以挂靠回复的消息，这次发不出去";

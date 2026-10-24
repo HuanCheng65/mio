@@ -71,19 +71,19 @@ test("say refuses unknown aliases and message ids without sending", async () => 
   await app.stop();
 });
 
-test("shadow mode counts toward the guardrails but sends nothing", async () => {
+test("shadow mode reports sends as real, counts toward the guardrails, sends nothing", async () => {
   const { app, outbox, say } = await setup({ minIntervalMs: 0, maxPerHour: 40, maxConsecutive: 2 });
   const { session, sent } = fakeSession();
   outbox.noteUserMessage(G, session);
   const shadow = { ...qq, shadow: true };
 
-  assert.match(await say.run({ text: "一" }, shadow), /影子模式/);
-  assert.match(await say.run({ text: "二" }, shadow), /影子模式/);
+  assert.match(await say.run({ text: "一" }, shadow), /^发出去了$/);
+  assert.match(await say.run({ text: "二" }, shadow), /^发出去了$/);
   assert.match(await say.run({ text: "三" }, shadow), /连着说了 2 条没人接/);
   assert.deepEqual(sent, []);
 
   outbox.noteUserMessage(G, session);
-  assert.match(await say.run({ text: "四" }, shadow), /影子模式/, "someone speaking resets the streak");
+  assert.match(await say.run({ text: "四" }, shadow), /^发出去了$/, "someone speaking resets the streak");
   await app.stop();
 });
 
