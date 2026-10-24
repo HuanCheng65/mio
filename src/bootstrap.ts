@@ -23,11 +23,11 @@ import { registerAdminCommands } from "./runtime/commands";
 import { PersonaService, seedDefaultPersonaIfMissing } from "./persona/service";
 import { GeminiCacheManager } from "./llm/gemini-cache";
 import { registerServiceListeners } from "./console/service-listeners";
-import { GroupRegistry } from "./runtime/groups";
+import type { GroupRegistry } from "./runtime/groups";
 
 type Logger = ReturnType<Context["logger"]>;
 
-export function tryBootstrapServices(ctx: Context, config: MioConfig, logger: Logger): boolean {
+export function tryBootstrapServices(ctx: Context, config: MioConfig, logger: Logger, groups: GroupRegistry): boolean {
   if (!config?.providers || config.providers.length === 0) {
     logger.warn("未配置任何 LLM 供应商，运行时未启动（可在 Console 「模型配置」补全）");
     return false;
@@ -144,7 +144,6 @@ export function tryBootstrapServices(ctx: Context, config: MioConfig, logger: Lo
   const hourlyTimer = setInterval(() => state.hourlyReplies.clear(), 3600_000);
 
   const shadowLogger = new ShadowLogger(path.resolve(ctx.baseDir, "data/shadow"));
-  const groups = new GroupRegistry(ctx);
 
   const runtimeDeps = {
     ctx,
@@ -168,8 +167,8 @@ export function tryBootstrapServices(ctx: Context, config: MioConfig, logger: Lo
   };
 
   const { processConversation, triggerMemoryExtraction } = createConversationRuntime(runtimeDeps, state);
-  const { preloadGroup } = registerHistoryAndReadyHandlers(runtimeDeps, state, triggerMemoryExtraction);
-  registerAdminCommands(runtimeDeps, state, preloadGroup);
+  registerHistoryAndReadyHandlers(runtimeDeps, state, triggerMemoryExtraction);
+  registerAdminCommands(runtimeDeps, state);
   registerRuntimeEvents(runtimeDeps, state, processConversation, triggerMemoryExtraction);
 
   logger.info("澪已启动");
@@ -185,7 +184,7 @@ export function tryBootstrapServices(ctx: Context, config: MioConfig, logger: Lo
     await Promise.allSettled([personaSeedPromise]);
 
     if (memory && extractionScheduler) {
-      const pending = groups.list().filter((g) => extractionScheduler!.getPendingCount(g) > 0);
+      const pending = groups.legacyGroups().filter((g) => extractionScheduler!.getPendingCount(g) > 0);
       if (pending.length > 0) {
         logger.info(`Dispose: 正在提取 ${pending.length} 个群的待处理记忆...`);
         await Promise.allSettled(pending.map((g) => triggerMemoryExtraction(g, "shutdown")));

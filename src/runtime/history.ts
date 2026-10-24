@@ -6,7 +6,7 @@ export function registerHistoryAndReadyHandlers(
   deps: RuntimeDeps,
   state: RuntimeState,
   triggerMemoryExtraction: (groupId: string, reason: string) => Promise<void>,
-): { preloadGroup: (groupId: string) => Promise<void> } {
+): void {
   const { buffer, config, ctx, extractionScheduler, groups, logger, normalizer } = deps;
 
   const preloadedGroups = new Set<string>();
@@ -96,7 +96,7 @@ export function registerHistoryAndReadyHandlers(
 
   async function preloadAllGroups() {
     logger.info("开始预加载历史消息...");
-    for (const groupId of groups.list()) {
+    for (const groupId of groups.legacyGroups()) {
       await preloadGroup(groupId);
     }
     logger.info("历史消息预加载完成");
@@ -109,27 +109,29 @@ export function registerHistoryAndReadyHandlers(
     await preloadAllGroups();
   });
 
+  groups.onChange(async (groupId) => {
+    if (groups.runsLegacyRuntime(groupId)) await preloadGroup(groupId);
+  });
+
   ctx.on("ready", async () => {
-    await groups.load();
+    await groups.whenLoaded();
     groupsLoaded = true;
-    logger.info(`已启用的群: ${groups.list().join(", ") || "无"}`);
+    logger.info(`旧运行时处理的群: ${groups.legacyGroups().join(", ") || "无"}`);
 
     await preloadAllGroups();
 
     if (extractionScheduler) {
-      for (const groupId of groups.list()) {
+      for (const groupId of groups.legacyGroups()) {
         if (extractionScheduler.getLastExtractedAt(groupId) === 0) {
           extractionScheduler.markExtracted(groupId);
           logger.debug(`[${groupId}] 初始化记忆提取时间戳`);
         }
       }
 
-      extractionScheduler.startTimeoutChecker(() => groups.list(), async (groupId) => {
+      extractionScheduler.startTimeoutChecker(() => groups.legacyGroups(), async (groupId) => {
         logger.debug(`[${groupId}] 记忆提取超时触发`);
         await triggerMemoryExtraction(groupId, "timeout");
       });
     }
   });
-
-  return { preloadGroup };
 }

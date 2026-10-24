@@ -1,37 +1,9 @@
 import { reloadPrompts } from "../memory/prompt-manager";
 import { tokenTracker } from "../llm/token-tracker";
 import type { RuntimeDeps, RuntimeState } from "./types";
-import type { MioGroupMode } from "./groups";
 
-const MODE_LABELS: Record<MioGroupMode, string> = {
-  on: "已在本群开启",
-  shadow: "已在本群开启影子模式（正常推理但不发送消息，记录到日志）",
-  off: "已在本群关闭",
-};
-
-export function registerAdminCommands(
-  deps: RuntimeDeps,
-  state: RuntimeState,
-  preloadGroup: (groupId: string) => Promise<void>,
-): void {
+export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): void {
   const { ctx, logger, groups, geminiCacheManager } = deps;
-
-  ctx.command("mio", "澪管理指令", { authority: 4 });
-
-  for (const mode of ["on", "shadow", "off"] as const) {
-    ctx
-      .command(`mio.${mode}`, MODE_LABELS[mode].replace(/^已在/, "在"), { authority: 4 })
-      .channelFields(["mioMode"])
-      .action(async ({ session }) => {
-        if (!session || session.isDirect) return "请在群里使用这个指令";
-        const groupId = session.cid;
-        session.channel.mioMode = mode;
-        groups.set(groupId, mode);
-        logger.info(`[admin] ${groupId} 切换为 ${mode}`);
-        if (mode !== "off") await preloadGroup(groupId);
-        return `${MODE_LABELS[mode]}（群 ID: ${groupId}）`;
-      });
-  }
 
   ctx.command("mio.reload", "重载 prompt 模板和人设文件", { authority: 4 }).action(async () => {
     try {
@@ -50,8 +22,8 @@ export function registerAdminCommands(
   ctx.command("mio.status", "查看运行状态", { authority: 4 }).action(async () => {
     const lines: string[] = [];
 
-    const enabled = groups.list().map((g) => (groups.isShadow(g) ? `${g}（影子）` : g));
-    lines.push(`监听群: ${enabled.length > 0 ? enabled.join(", ") : "无"}`);
+    const enabled = groups.list().map((g) => `${g}（${groups.getMode(g)}）`);
+    lines.push(`已开启的群: ${enabled.length > 0 ? enabled.join(", ") : "无"}`);
 
     const mutedGroups = [...state.botMutedGroups.entries()].filter(([, v]) => v).map(([k]) => k);
     lines.push(`静默群: ${mutedGroups.length > 0 ? mutedGroups.join(", ") : "无"}`);

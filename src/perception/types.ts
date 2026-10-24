@@ -43,6 +43,7 @@ export interface ImageSegment {
   isSticker: boolean;
   width?: number;
   height?: number;
+  file?: string;               // 录制时保存到 data/mio/media 的文件名
 }
 
 export interface FaceSegment {

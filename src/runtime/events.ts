@@ -62,7 +62,7 @@ export function registerRuntimeEvents(
 
     if (data.group_id === undefined) return;
     const groupId = toGroupId(session.platform, String(data.group_id));
-    if (!groups.isActive(groupId)) return;
+    if (!groups.runsLegacyRuntime(groupId)) return;
 
     const userId = String(data.user_id ?? "");
     const operatorId = String(data.operator_id ?? "");
@@ -108,7 +108,7 @@ export function registerRuntimeEvents(
   ctx.on("message-deleted", async (session) => {
     if (session.isDirect || !session.channelId) return;
     const groupId = session.cid;
-    if (!groups.isActive(groupId)) return;
+    if (!groups.runsLegacyRuntime(groupId)) return;
     const recalledMsgId = session.messageId;
     if (!recalledMsgId) return;
 
@@ -125,7 +125,7 @@ export function registerRuntimeEvents(
   async function handleGroupMessage(session: Session): Promise<void> {
     if (session.isDirect) return;
     const groupId = session.cid;
-    if (!groups.isActive(groupId)) return;
+    if (!groups.runsLegacyRuntime(groupId)) return;
 
     const msg = await normalizer.normalize(session, false, buffer);
     const messageId = msg.id;
