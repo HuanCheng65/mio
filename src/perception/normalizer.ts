@@ -141,6 +141,13 @@ export class MessageNormalizer {
         return { segment: { type: 'face', faceId: Number(faceId), name } };
       }
 
+      // 官方 QQ 的超级表情 / 表情商城表情：适配器从 ext 里解出名字，表情商城的没有 id
+      case 'emoji': {
+        const id = el.attrs?.id;
+        const name = el.attrs?.name || (id ? getEmojiById(String(id))?.name : undefined) || (id ? `表情${id}` : '表情');
+        return { segment: { type: 'face', faceId: id ? Number(id) : 0, name } };
+      }
+
       case 'json':
       case 'share': {
         return { segment: this.parseShareCard(el) };
