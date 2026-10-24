@@ -55,6 +55,7 @@ class UnknownAlias extends Error {
 export function createSayTool(deps: OutwardDeps): AgentTool {
   return {
     name: "say",
+    outward: true,
     description:
       "在群里说一句话。这是你在群里出声的方式，不想说就不用调用。" +
       "一次 say 就是一条消息，想分几条说就调用几次。@ 某人写 @#别名（如 @#a3）。" +
@@ -105,6 +106,7 @@ export function createSayTool(deps: OutwardDeps): AgentTool {
 export function createReactTool(deps: OutwardDeps): AgentTool {
   return {
     name: "react",
+    outward: true,
     description:
       "给某条消息点一个表情回应，群里会看到你点了。适合\"看到了、有感觉，但没什么要说的\"。" +
       `能用的表情：${ALLOWED_REACT_EMOJI_NAMES.join("、")}。点了就别再用 say 说同一个意思。`,
@@ -134,6 +136,7 @@ export function createReactTool(deps: OutwardDeps): AgentTool {
 export function createStickerTool(deps: OutwardDeps & { stickers: StickerFinder }): AgentTool {
   return {
     name: "sticker",
+    outward: true,
     description:
       "从你攒的表情包里挑一张发出去。用一句话描述想表达的感觉或画面，比如\"憋笑 猫\"\"震惊 瞪大眼睛\"。" +
       "一次最多一张，找不到合适的就算了。",

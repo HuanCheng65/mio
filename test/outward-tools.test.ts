@@ -13,7 +13,7 @@ import { ToolRegistry, type ToolContext } from "../src/agent/tools";
 import type { NormalizedMessage } from "../src/perception/types";
 
 const G = "qq:G";
-const qq: ToolContext = { groupId: G, platform: "qq", shadow: false };
+const qq: ToolContext = { groupId: G, platform: "qq", shadow: false, allowOutward: true };
 const instant = { minDelay: 0, maxDelay: 0, typingSpeed: 0 };
 
 function fakeSession(platform = "qq", timestamp = Date.now()) {

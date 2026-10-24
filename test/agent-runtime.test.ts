@@ -8,7 +8,7 @@ import sqlite from "@koishijs/plugin-database-sqlite";
 import { extendEventTable, EventStore } from "../src/agent/event-store";
 import { AliasRegistry, extendAliasTable } from "../src/agent/aliases";
 import { AgentLog, extendLogTable, type ToolCall } from "../src/agent/log-store";
-import { AgentRuntime } from "../src/agent/runtime";
+import { AgentRuntime, type SleepOptions } from "../src/agent/runtime";
 import { ToolRegistry, type AgentTool } from "../src/agent/tools";
 import type { AgentStep } from "../src/agent/llm";
 import type { NormalizedMessage } from "../src/perception/types";
@@ -29,7 +29,10 @@ const reply = (toolCalls: ToolCall[] = [], extra: Partial<AgentStep> = {}): Agen
   ...extra,
 });
 
-async function setup(script: AgentStep[], options: { maxSteps?: number; tools?: AgentTool[]; onStep?: (n: number) => Promise<void> } = {}) {
+async function setup(
+  script: AgentStep[],
+  options: { maxSteps?: number; tools?: AgentTool[]; onStep?: (n: number) => Promise<void>; sleep?: Partial<SleepOptions> } = {},
+) {
   const app = new Context();
   app.plugin(sqlite, { path: ":memory:" });
   extendEventTable(app);
@@ -62,11 +65,14 @@ async function setup(script: AgentStep[], options: { maxSteps?: number; tools?: 
     },
   };
   const tools = new ToolRegistry(options.tools ?? [echo], (c, e) => errors.push(`${c.function.name}: ${e}`));
+  const segmentStarts: string[] = [];
   const runtime = new AgentRuntime(log, llm as any, tools, {
     model: { providerId: "p", modelName: "m", maxTokens: 100 },
     maxSteps: options.maxSteps ?? 6,
     systemPrompt: "SYSTEM",
     isShadow: () => false,
+    sleep: { prompt: "〔{time} 睡前整理〕", maxSteps: 6, compactTokens: 1_000_000, idleMs: 3600_000, minTokens: 0, tailEvents: 30, ...options.sleep },
+    onSegmentStart: (g) => segmentStarts.push(g),
   }, quiet);
 
   let n = 0;
@@ -75,7 +81,7 @@ async function setup(script: AgentStep[], options: { maxSteps?: number; tools?: 
     const msg: NormalizedMessage = { id, sender: "小林", senderId: "U1", isBot: false, timestamp: Date.now(), segments: [{ type: "text", content: text }], mentions: [] };
     return events.append(G, async () => ({ kind: "message", platformMessageId: id, userId: "U1", isBot: false, timestamp: msg.timestamp, body: msg }));
   };
-  return { app, log, runtime, requests, ran, errors, say };
+  return { app, log, runtime, requests, ran, errors, say, segmentStarts };
 }
 
 test("a wake with no tool calls ends after one step and keeps the reasoning", async () => {
@@ -168,5 +174,70 @@ test("bad tool calls come back as results the model can act on", async () => {
   const results = (await log.entries(G)).filter((e) => e.role === "tool").map((e) => (e.content[0] as any).text);
   assert.deepEqual(results, ["没有叫 missing 的工具。可用的有：boom", "参数不是合法的 JSON：{not json", "boom 出错了，这次没有完成。"]);
   assert.deepEqual(errors, ["boom: Error: kaput"]);
+  await app.stop();
+});
+
+const loud: AgentTool = { name: "say", description: "", parameters: {}, outward: true, async run() { return "发出去了"; } };
+const finish = (sketch = "群里很安静", handoff = "小林说要去考试") => reply([], { content: `【群速写】\n${sketch}\n【交接】\n${handoff}` });
+
+test("sleep consolidates without speaking and opens a new segment", async () => {
+  const note: AgentTool = { name: "note", description: "", parameters: {}, async run() { return "记下了"; } };
+  const { app, log, runtime, say, segmentStarts } = await setup(
+    [reply([call("c1", "say", { text: "晚安" }), call("c2", "note", {})]), finish(), reply()],
+    { tools: [loud, note] },
+  );
+  await say("早");
+  await runtime.requestSleep(G);
+
+  const old = await log.entries(G);
+  assert.equal(old.length, 1, "only the new segment is visible");
+  const opening = (old[0].content[0] as any).text as string;
+  assert.match(opening, /^〔群速写〕\n群里很安静\n\n〔上一段的交接〕\n小林说要去考试\n\n〔睡前最后看到的消息〕\n〔.*〕\n\[m1\] 小林#a1 .*: 早$/);
+  assert.deepEqual(segmentStarts, [G]);
+
+  const all = await app.database.get("mio.log_entry", { groupId: G, segment: 1, role: "tool" });
+  assert.deepEqual(all.map((e) => (e.content[0] as any).text), ["现在在睡前整理，不往群里说话", "记下了"]);
+
+  await say("我回来了");
+  await runtime.wake(G);
+  const after = await log.entries(G);
+  assert.match((after[1].content[0] as any).text, /\[m2\] 小林#a1 .*: 我回来了/, "numbering continues after the segment break");
+  await app.stop();
+});
+
+test("a sleep that does not end with the two sections leaves the log alone", async () => {
+  const { app, log, runtime, say, segmentStarts } = await setup([reply([], { content: "睡了" })]);
+  await say("早");
+  await assert.rejects(runtime.requestSleep(G), /没有按【群速写】【交接】格式收尾/);
+  assert.equal(await log.currentSegment(G), 1);
+  assert.deepEqual(segmentStarts, []);
+  await app.stop();
+});
+
+test("small logs are not consolidated", async () => {
+  const { app, runtime, requests, say } = await setup([], { sleep: { minTokens: 10_000 } });
+  await say("早");
+  await runtime.requestSleep(G);
+  assert.equal(requests.length, 0);
+  await app.stop();
+});
+
+test("a log over the size limit sleeps right after the wake", async () => {
+  const { app, log, runtime, say } = await setup([reply(), finish()], { sleep: { compactTokens: 1 } });
+  await say("早");
+  await runtime.wake(G);
+  assert.equal(await log.currentSegment(G), 2);
+  await app.stop();
+});
+
+test("a quiet group goes to sleep after the idle time", async () => {
+  const { app, log, runtime, say } = await setup([reply(), finish()], { sleep: { idleMs: 20 } });
+  await say("早");
+  await runtime.wake(G);
+  runtime.noteActivity(G);
+  await new Promise((r) => setTimeout(r, 80));
+  await runtime.wake(G); // waits for the running sleep; no new messages, so no extra model call
+  assert.equal(await log.currentSegment(G), 2);
+  runtime.dispose();
   await app.stop();
 });

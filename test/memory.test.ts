@@ -11,7 +11,7 @@ import type { ToolContext } from "../src/agent/tools";
 import type { NormalizedMessage } from "../src/perception/types";
 
 const G = "qq:G";
-const ctx: ToolContext = { groupId: G, platform: "qq", shadow: false };
+const ctx: ToolContext = { groupId: G, platform: "qq", shadow: false, allowOutward: true };
 
 /** 确定性的假向量：字符哈希到 64 维再归一化，字面越像相似度越高 */
 const fakeEmbedding = {

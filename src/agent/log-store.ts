@@ -120,38 +120,60 @@ export class AgentLog {
       if (pending.length === 0) return null;
 
       const skipped = Math.max(0, pending.length - this.options.maxBatchEvents);
-      const events = pending.slice(skipped);
-
-      const aliases = new Map<string, string>();
-      const names = new Map<string, string>();
-      const referenced = new Set<string>();
-      for (const event of events) {
-        if (event.kind === "recall") {
-          referenced.add((event.body as { recalledMessageId: string }).recalledMessageId);
-          continue;
-        }
-        const msg = event.body as NormalizedMessage;
-        if (!msg.isBot) aliases.set(msg.senderId, await this.aliases.aliasOf(groupId, msg.senderId, msg.sender));
-        for (const m of msg.mentions) {
-          if (m.isBot) continue;
-          const known = m.displayName !== m.userId ? m.displayName : undefined;
-          aliases.set(m.userId, await this.aliases.aliasOf(groupId, m.userId, known));
-          const name = await this.aliases.nameOf(groupId, m.userId);
-          if (name) names.set(m.userId, name);
-        }
-        if (msg.replyTo) referenced.add(msg.replyTo.messageId);
-      }
-
-      const seqByMessageId = new Map<string, number>();
-      if (referenced.size > 0) {
-        const rows = await this.ctx.database.get("mio.event", { groupId, platformMessageId: { $in: [...referenced] } }, ["platformMessageId", "seq"]);
-        for (const row of rows) seqByMessageId.set(row.platformMessageId, row.seq);
-      }
-
-      const annotations = this.options.annotate ? await this.options.annotate(groupId, events as MioEventRow[]) : [];
-      const content = renderBatch(events as MioEventRow[], { aliases, names, seqByMessageId, botName: this.options.botName, skipped, annotations });
+      const events = pending.slice(skipped) as MioEventRow[];
+      const content = await this.render(groupId, events, { skipped, annotate: true });
       return this.create(groupId, { role: "user", content }, events[events.length - 1].seq);
     });
+  }
+
+  /**
+   * 开新的一段 log（压缩）：第一条是 preamble（群速写、交接）加最近 tailEvents 条消息原文。
+   * lastSeq 沿用上一段，之后的批次从这里接着往下，不重复也不遗漏。
+   */
+  startSegment(groupId: string, preamble: string, tailEvents: number): Promise<MioLogEntryRow> {
+    return this.serial(groupId, async () => {
+      const segment = (await this.currentSegment(groupId)) + 1;
+      const after = await this.lastSeq(groupId);
+      const tail = (await this.ctx.database.get("mio.event", { groupId, seq: { $lte: after } }, { sort: { seq: "desc" }, limit: tailEvents })).reverse() as MioEventRow[];
+
+      let content: LogPart[] = [{ type: "text", text: preamble }];
+      if (tail.length > 0) {
+        const [first, ...images] = await this.render(groupId, tail, { skipped: 0, annotate: false });
+        content = [{ type: "text", text: `${preamble}\n\n〔睡前最后看到的消息〕\n${(first as { text: string }).text}` }, ...images];
+      }
+      return this.create(groupId, { role: "user", content }, after, segment);
+    });
+  }
+
+  private async render(groupId: string, events: MioEventRow[], options: { skipped: number; annotate: boolean }): Promise<LogPart[]> {
+    const aliases = new Map<string, string>();
+    const names = new Map<string, string>();
+    const referenced = new Set<string>();
+    for (const event of events) {
+      if (event.kind === "recall") {
+        referenced.add((event.body as { recalledMessageId: string }).recalledMessageId);
+        continue;
+      }
+      const msg = event.body as NormalizedMessage;
+      if (!msg.isBot) aliases.set(msg.senderId, await this.aliases.aliasOf(groupId, msg.senderId, msg.sender));
+      for (const m of msg.mentions) {
+        if (m.isBot) continue;
+        const known = m.displayName !== m.userId ? m.displayName : undefined;
+        aliases.set(m.userId, await this.aliases.aliasOf(groupId, m.userId, known));
+        const name = await this.aliases.nameOf(groupId, m.userId);
+        if (name) names.set(m.userId, name);
+      }
+      if (msg.replyTo) referenced.add(msg.replyTo.messageId);
+    }
+
+    const seqByMessageId = new Map<string, number>();
+    if (referenced.size > 0) {
+      const rows = await this.ctx.database.get("mio.event", { groupId, platformMessageId: { $in: [...referenced] } }, ["platformMessageId", "seq"]);
+      for (const row of rows) seqByMessageId.set(row.platformMessageId, row.seq);
+    }
+
+    const annotations = options.annotate && this.options.annotate ? await this.options.annotate(groupId, events) : [];
+    return renderBatch(events, { aliases, names, seqByMessageId, botName: this.options.botName, skipped: options.skipped, annotations });
   }
 
   /** 追加 assistant / tool 条目（agent 循环使用） */
@@ -159,11 +181,11 @@ export class AgentLog {
     return this.serial(groupId, () => this.create(groupId, entry, null));
   }
 
-  private async create(groupId: string, entry: NewLogEntry, lastSeq: number | null): Promise<MioLogEntryRow> {
+  private async create(groupId: string, entry: NewLogEntry, lastSeq: number | null, segment?: number): Promise<MioLogEntryRow> {
     const toolCallTokens = entry.toolCalls ? estimateTokens(JSON.stringify(entry.toolCalls)) : 0;
     return this.ctx.database.create("mio.log_entry", {
       groupId,
-      segment: await this.currentSegment(groupId),
+      segment: segment ?? (await this.currentSegment(groupId)),
       role: entry.role,
       content: entry.content,
       toolCalls: entry.toolCalls ?? null,

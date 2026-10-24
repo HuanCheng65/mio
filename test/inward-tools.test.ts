@@ -11,7 +11,7 @@ import type { ToolContext } from "../src/agent/tools";
 import type { NormalizedMessage } from "../src/perception/types";
 
 const G = "qq:G";
-const ctx: ToolContext = { groupId: G, platform: "qq", shadow: false };
+const ctx: ToolContext = { groupId: G, platform: "qq", shadow: false, allowOutward: true };
 
 function fakeSearch() {
   const calls: unknown[][] = [];

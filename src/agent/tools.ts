@@ -10,12 +10,16 @@ export interface ToolContext {
   platform: string;
   /** 影子模式：对外工具只记录、不真正发送 */
   shadow: boolean;
+  /** 睡前整理时为 false：对外工具一律不执行 */
+  allowOutward: boolean;
 }
 
 export interface AgentTool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** 会出现在群里的动作（say / react / sticker） */
+  outward?: boolean;
   /** 只在部分平台可用的工具（例如表情回应只有 OneBot 能发）；不提供表示所有平台都可用 */
   available?(platform: string): boolean;
   /** 返回给模型看的结果文本。被护栏拦下这类预期情况应在结果里说明，而不是抛异常。 */
@@ -50,6 +54,8 @@ export class ToolRegistry {
       const names = this.definitions(ctx.platform).map((d) => d.function.name);
       return `没有叫 ${call.function.name} 的工具。可用的有：${names.join("、")}`;
     }
+
+    if (tool.outward && !ctx.allowOutward) return "现在在睡前整理，不往群里说话";
 
     let args: Record<string, unknown>;
     try {
