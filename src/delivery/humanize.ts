@@ -149,18 +149,19 @@ function calculateDelay(length: number, options: Required<DeliveryOptions>): num
 
 /**
  * 拆分后逐条发送。每条发送前检查平台的被动回复限制，不满足就停下，
- * 返回已发出的片段和停下的原因（全部发出时 blocked 为 null）。
+ * 返回已发出的片段、平台消息 ID 和停下的原因（全部发出时 blocked 为 null）。
  */
 export async function humanizedSend(
   session: Session,
   content: string,
   options?: DeliveryOptions
-): Promise<{ sentParts: string[]; blocked: string | null }> {
+): Promise<{ sentParts: string[]; messageIds: string[]; blocked: string | null }> {
   const opts = { ...defaultOptions, ...options };
 
   // 拆分消息
   const parts = splitMessage(content, opts.splitThreshold);
   const sentParts: string[] = [];
+  const messageIds: string[] = [];
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i].trim().replace(/。$/, '');
@@ -171,11 +172,11 @@ export async function humanizedSend(
 
     await new Promise((resolve) => setTimeout(resolve, delay));
     const blocked = passiveReplyBlocker(session);
-    if (blocked) return { sentParts, blocked };
-    await session.send(part);
+    if (blocked) return { sentParts, messageIds, blocked };
+    messageIds.push(...(await session.send(part)));
     recordPassiveReply(session);
     sentParts.push(part);
   }
 
-  return { sentParts, blocked: null };
+  return { sentParts, messageIds, blocked: null };
 }

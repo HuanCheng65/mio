@@ -67,6 +67,12 @@ export class EventStore {
     return task;
   }
 
+  /** 按群内编号取事件（[mN] → 平台消息 ID 等） */
+  async get(groupId: string, seq: number): Promise<MioEventRow | undefined> {
+    const [row] = await this.ctx.database.get("mio.event", { groupId, seq });
+    return row;
+  }
+
   private async allocateSeq(groupId: string): Promise<number> {
     let next = this.nextSeq.get(groupId);
     if (next === undefined) {

@@ -6,6 +6,7 @@ import { DATA_DIR } from "../paths";
 import type { AgentLLM } from "./llm";
 import type { AgentLog } from "./log-store";
 import type { ToolRegistry } from "./tools";
+import { parseGroupId } from "../runtime/groups";
 
 type Logger = ReturnType<Context["logger"]>;
 
@@ -64,8 +65,9 @@ export class AgentRuntime {
     const first = await this.log.appendPendingBatch(groupId);
     if (!first) return;
 
-    const tools = this.tools.definitions();
-    const ctx = { groupId, shadow: this.options.isShadow(groupId) };
+    const { platform } = parseGroupId(groupId);
+    const tools = this.tools.definitions(platform);
+    const ctx = { groupId, platform, shadow: this.options.isShadow(groupId) };
     let promptTokens = 0;
     let cachedTokens = 0;
     let toolCalls = 0;

@@ -7,6 +7,7 @@ export interface ToolDefinition {
 
 export interface ToolContext {
   groupId: string;
+  platform: string;
   /** 影子模式：对外工具只记录、不真正发送 */
   shadow: boolean;
 }
@@ -15,6 +16,8 @@ export interface AgentTool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** 只在部分平台可用的工具（例如表情回应只有 OneBot 能发）；不提供表示所有平台都可用 */
+  available?(platform: string): boolean;
   /** 返回给模型看的结果文本。被护栏拦下这类预期情况应在结果里说明，而不是抛异常。 */
   run(args: Record<string, unknown>, ctx: ToolContext): Promise<string>;
 }
@@ -29,8 +32,9 @@ export class ToolRegistry {
     }
   }
 
-  definitions(): ToolDefinition[] {
-    return [...this.tools.values()].map((t) => ({
+  /** 某个平台上可用的工具定义；同一个群的平台固定，列表也就固定，不影响缓存 */
+  definitions(platform: string): ToolDefinition[] {
+    return [...this.tools.values()].filter((t) => t.available?.(platform) ?? true).map((t) => ({
       type: "function",
       function: { name: t.name, description: t.description, parameters: t.parameters },
     }));
@@ -42,7 +46,10 @@ export class ToolRegistry {
    */
   async call(call: ToolCall, ctx: ToolContext): Promise<string> {
     const tool = this.tools.get(call.function.name);
-    if (!tool) return `没有叫 ${call.function.name} 的工具。可用的有：${[...this.tools.keys()].join("、")}`;
+    if (!tool || !(tool.available?.(ctx.platform) ?? true)) {
+      const names = this.definitions(ctx.platform).map((d) => d.function.name);
+      return `没有叫 ${call.function.name} 的工具。可用的有：${names.join("、")}`;
+    }
 
     let args: Record<string, unknown>;
     try {
