@@ -241,3 +241,32 @@ test("a quiet group goes to sleep after the idle time", async () => {
   runtime.dispose();
   await app.stop();
 });
+
+test("a tool call cut off by a restart is closed before the next wake", async () => {
+  const { app, log, runtime, requests, say } = await setup([reply()]);
+  await say("早");
+  await log.appendPendingBatch(G);
+  await log.appendEntry(G, { role: "assistant", content: [], toolCalls: [call("c1", "note", { text: "a" })] });
+
+  await say("还在吗");
+  await runtime.wake(G);
+
+  assert.deepEqual((await log.entries(G)).map((e) => [e.role, e.toolCallId]), [
+    ["user", null], ["assistant", null], ["tool", "c1"], ["user", null], ["assistant", null],
+  ]);
+  assert.match((requests[0][3] as any).content, /执行途中程序重启了/);
+  await app.stop();
+});
+
+test("a missing tool result followed by other entries is reported, not patched", async () => {
+  const { app, log, runtime, say } = await setup([reply()]);
+  await say("早");
+  await log.appendPendingBatch(G);
+  await log.appendEntry(G, { role: "assistant", content: [], toolCalls: [call("c1", "note", { text: "a" })] });
+  await say("还在吗");
+  await log.appendPendingBatch(G);
+
+  await assert.rejects(runtime.wake(G), /tool calls c1 have no results and later entries follow/);
+  assert.equal((await log.entries(G)).length, 3, "the broken log must not grow");
+  await app.stop();
+});

@@ -181,6 +181,35 @@ export class AgentLog {
     return this.serial(groupId, () => this.create(groupId, entry, null));
   }
 
+  /**
+   * 进程在工具执行途中重启时，最后一条 assistant 的 tool_calls 会缺结果，之后每次请求都会被接口拒绝。
+   * 唤醒前给缺的调用补上"中断了"的结果，返回补了几条。缺结果的调用后面已经接了别的条目时，
+   * 说明 log 的顺序已经乱了，补不了，直接报错。
+   */
+  closeInterruptedCalls(groupId: string): Promise<number> {
+    return this.serial(groupId, async () => {
+      const entries = await this.entries(groupId);
+      let last = entries.length - 1;
+      while (last >= 0 && !(entries[last].role === "assistant" && entries[last].toolCalls)) last--;
+      if (last < 0) return 0;
+      const after = entries.slice(last + 1);
+      const answered = new Set(after.filter((e) => e.role === "tool").map((e) => e.toolCallId));
+      const missing = entries[last].toolCalls!.filter((call) => !answered.has(call.id));
+      if (missing.length === 0) return 0;
+      if (after.some((e) => e.role !== "tool")) {
+        throw new Error(`log entry ${entries[last].id}: tool calls ${missing.map((c) => c.id).join(", ")} have no results and later entries follow`);
+      }
+      for (const call of missing) {
+        await this.create(groupId, {
+          role: "tool",
+          content: [{ type: "text", text: "（这一步没有结果：执行途中程序重启了，不确定有没有生效）" }],
+          toolCallId: call.id,
+        }, null);
+      }
+      return missing.length;
+    });
+  }
+
   private async create(groupId: string, entry: NewLogEntry, lastSeq: number | null, segment?: number): Promise<MioLogEntryRow> {
     const toolCallTokens = entry.toolCalls ? estimateTokens(JSON.stringify(entry.toolCalls)) : 0;
     return this.ctx.database.create("mio.log_entry", {

@@ -121,12 +121,19 @@ export class AgentRuntime {
   }
 
   private async wakeOnce(groupId: string): Promise<void> {
+    await this.closeInterrupted(groupId);
     const first = await this.log.appendPendingBatch(groupId);
     if (!first) return;
     await this.steps(groupId, { maxSteps: this.options.maxSteps, allowOutward: true, appendArrivals: true });
   }
 
+  private async closeInterrupted(groupId: string): Promise<void> {
+    const closed = await this.log.closeInterruptedCalls(groupId);
+    if (closed > 0) this.logger.warn(`[${groupId}] 上次有 ${closed} 个工具调用执行到一半进程就退出了，已在 log 里标成中断`);
+  }
+
   private async sleepOnce(groupId: string): Promise<void> {
+    await this.closeInterrupted(groupId);
     const tokens = await this.log.tokenCount(groupId);
     if (tokens < this.options.sleep.minTokens) {
       this.logger.debug(`[${groupId}] log 只有 ${tokens} tokens，不用整理`);
