@@ -1,8 +1,17 @@
 import { ProviderManager, ModelConfig } from '../llm/provider'
 import { tokenTracker } from '../llm/token-tracker'
 
+/**
+ * 调用方负责跳过还没有向量的记录；走到这里的两个向量必须来自同一个 embedding 模型。
+ * 维度不一致说明库里混进了别的模型算的向量，比较结果没有意义，直接报错。
+ */
 export function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length || a.length === 0) return 0
+  if (a.length === 0 || b.length === 0) {
+    throw new Error(`cosineSimilarity: empty embedding (dims ${a.length} vs ${b.length})`)
+  }
+  if (a.length !== b.length) {
+    throw new Error(`cosineSimilarity: embedding dimension mismatch (${a.length} vs ${b.length})，库里的向量和当前 embedding 模型不一致`)
+  }
   let dot = 0, normA = 0, normB = 0
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i]
@@ -14,10 +23,21 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 export class EmbeddingService {
+  private modelVerified = false
+
   constructor(
     private providerManager: ProviderManager,
     private modelConfig: ModelConfig,
   ) { }
+
+  get modelName(): string {
+    return this.modelConfig.modelName
+  }
+
+  /** 由 MemoryService 在确认库里的向量与当前模型一致后调用 */
+  markModelVerified(): void {
+    this.modelVerified = true
+  }
 
   async embed(text: string): Promise<number[]> {
     const result = await this.embedBatch([text])
@@ -26,6 +46,9 @@ export class EmbeddingService {
 
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return []
+    if (!this.modelVerified) {
+      throw new Error('embedding 模型一致性检查未通过（见启动日志），记忆系统不可用')
+    }
 
     const provider = this.providerManager.getOpenAIProvider(this.modelConfig.providerId)
     if (!provider) {

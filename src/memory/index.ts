@@ -1,4 +1,4 @@
-import { Context } from 'koishi'
+import { $, Context } from 'koishi'
 import { MemoryConfig, MemoryContext } from './types'
 import { extendTables } from './tables'
 import { EmbeddingService } from './embedding'
@@ -81,6 +81,36 @@ export class MemoryService {
    */
   init() {
     extendTables(this.ctx)
+    this.ctx.on('ready', () => this.verifyEmbeddingModel())
+  }
+
+  /**
+   * 向量只有同一个模型算出来的才能互相比较。库里记录了算向量用的模型名，
+   * 和当前配置不一致时拒绝启用 embedding，而不是让检索悄悄失效。
+   */
+  private async verifyEmbeddingModel(): Promise<void> {
+    const current = this.embeddingService.modelName
+    const [row] = await this.ctx.database.get('mio.meta', { key: 'embeddingModel' })
+
+    if (!row) {
+      const tables = ['mio.episodic', 'mio.semantic', 'mio.culture_evidence', 'mio.sticker'] as const
+      const counts = await Promise.all(tables.map((t) => this.ctx.database.eval(t, (r) => $.count(r.id))))
+      if (counts.some((c) => c > 0)) {
+        throw new Error(
+          `记忆库里已有数据，但没有记录是用哪个 embedding 模型算的向量。` +
+          `如果确认就是 ${current}，请在 mio.meta 表插入 { key: "embeddingModel", value: "${current}" } 后重启`,
+        )
+      }
+      await this.ctx.database.create('mio.meta', { key: 'embeddingModel', value: current })
+    } else if (row.value !== current) {
+      throw new Error(
+        `embedding 模型从 ${row.value} 换成了 ${current}，库里的旧向量与新模型不可比。` +
+        `请改回 ${row.value}，或清空记忆和表情包数据后重新开始`,
+      )
+    }
+
+    this.embeddingService.markModelVerified()
+    this.ctx.logger('mio.memory').info(`embedding 模型: ${current}`)
   }
 
   /**

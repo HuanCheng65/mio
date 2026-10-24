@@ -9,7 +9,13 @@ declare module 'koishi' {
     'mio.semantic': MioSemanticRow
     'mio.sticker': MioStickerRow
     'mio.token_usage': MioTokenUsageRow
+    'mio.meta': MioMetaRow
   }
+}
+
+export interface MioMetaRow {
+  key: string
+  value: string
 }
 
 export type MioCultureEvidenceRow = CultureEvidenceRow
@@ -101,6 +107,13 @@ export interface MioTokenUsageRow {
 }
 
 export function extendTables(ctx: Context) {
+  ctx.model.extend('mio.meta', {
+    key: 'string(63)',
+    value: 'text',
+  }, {
+    primary: 'key',
+  })
+
   ctx.model.extend('mio.episodic', {
     id: 'unsigned',
     groupId: 'string(63)',
