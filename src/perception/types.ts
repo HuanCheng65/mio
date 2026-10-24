@@ -18,6 +18,7 @@ export interface NormalizedMessage {
   isSystemEvent?: boolean;       // true for recall/ban/unban notices — renderer omits sender prefix
 
   rawContent?: string;           // 原始 Koishi session.content（保留作为备份）
+  refIdx?: string;               // 官方 QQ：这条消息自己的引用索引（msg_idx），别人引用它时用这个指回来
 }
 
 export type MessageSegment =
@@ -92,6 +93,10 @@ export interface ReplyInfo {
   messageId: string;
   sender: string;
   preview: string;
+  /** 官方 QQ：被引用消息的引用索引（ref_msg_idx）。平台不给被引用消息的 ID，只能靠它查 */
+  refIdx?: string;
+  /** 被引用的是这个号自己发的消息 */
+  fromBot?: boolean;
 }
 
 export interface MentionInfo {

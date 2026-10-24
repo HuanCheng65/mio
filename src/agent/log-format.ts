@@ -67,7 +67,11 @@ function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext): 
   let reply = "";
   if (msg.replyTo) {
     const target = ctx.seqByMessageId.get(msg.replyTo.messageId);
-    reply = target !== undefined ? `↩m${target} ` : `↩${msg.replyTo.sender}「${msg.replyTo.preview}」 `;
+    const quoted = msg.replyTo.fromBot ? `${ctx.botName}（你）`
+      // 官方 QQ 的引用按索引没对上时，平台不给被引用者是谁
+      : msg.replyTo.refIdx && !msg.replyTo.messageId ? "一条没对上的消息"
+      : msg.replyTo.sender;
+    reply = target !== undefined ? `↩m${target} ` : `↩${quoted}「${msg.replyTo.preview}」 `;
   }
 
   const imageSegs = msg.segments.filter((s): s is ImageSegment => s.type === "image");

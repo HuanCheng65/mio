@@ -17,6 +17,8 @@ export interface MioEventRow {
   isBot: boolean;
   timestamp: number;
   body: NormalizedMessage | { recalledMessageId: string; recalledBy: string };
+  /** 官方 QQ 消息的引用索引，见 NormalizedMessage.refIdx */
+  refIdx?: string | null;
 }
 
 declare module "koishi" {
@@ -36,6 +38,7 @@ export function extendEventTable(ctx: Context): void {
     isBot: "boolean",
     timestamp: "unsigned(8)",
     body: "json",
+    refIdx: { type: "string", length: 255, nullable: true },
   }, {
     autoInc: true,
     primary: "id",
@@ -65,6 +68,12 @@ export class EventStore {
     // 一条失败不能卡住后续事件；失败由调用方的 catch 报告
     this.chains.set(groupId, task.catch(() => {}));
     return task;
+  }
+
+  /** 按官方 QQ 的引用索引找群友消息 */
+  async findByRefIdx(groupId: string, refIdx: string): Promise<MioEventRow | undefined> {
+    const [row] = await this.ctx.database.get("mio.event", { groupId, refIdx });
+    return row;
   }
 
   /** 按群内编号取事件（[mN] → 平台消息 ID 等） */

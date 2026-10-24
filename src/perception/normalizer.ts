@@ -3,6 +3,7 @@ import { ImageProcessor } from "../pipeline/image-processor";
 import { MessageBuffer } from "../pipeline/message-buffer";
 import { getEmojiById } from "../emoji/lookup";
 import { getGroupMemberInfo, isOneBot } from "../platform/onebot";
+import { isQQOfficial, qqRefIndexes } from "../platform/qq";
 import {
   NormalizedMessage,
   MessageSegment,
@@ -46,7 +47,9 @@ export class MessageNormalizer {
     }
 
     // 2. 处理引用
+    const refs = isQQOfficial(session) ? qqRefIndexes(session) : {};
     const replyTo = await this.extractReply(session, buffer);
+    if (replyTo && refs.quoted) replyTo.refIdx = refs.quoted;
 
     // 3. UID / 消息ID 兜底
     const msgId = session.messageId || session.event?.message?.id || crypto.randomUUID();
@@ -65,6 +68,7 @@ export class MessageNormalizer {
       replyTo,
       mentions,
       rawContent: session.content,
+      ...(refs.own ? { refIdx: refs.own } : {}),
     };
   }
 

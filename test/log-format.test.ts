@@ -55,6 +55,17 @@ test("points replies and recalls at earlier [mN] ids when known", () => {
   assert.match(text, /〔Masou 撤回了 m5〕/);
 });
 
+test("marks QQ quotes of the bot's own messages and quotes that could not be matched", () => {
+  const parts = renderBatch([
+    message(7, { replyTo: { messageId: "sent1", sender: "澪", preview: "尾巴在下一张", refIdx: "R1", fromBot: true }, segments: [{ type: "text", content: "你能看到吗" }] }),
+    message(8, { replyTo: { messageId: "", sender: "某人", preview: "打个招呼", refIdx: "R2" }, segments: [{ type: "text", content: "好" }] }),
+  ], ctx());
+
+  const text = (parts[0] as { text: string }).text;
+  assert.match(text, /\[m7\] 白川#a1 21:03: ↩澪（你）「尾巴在下一张」 你能看到吗/);
+  assert.match(text, /\[m8\] 白川#a1 21:03: ↩一条没对上的消息「打个招呼」 好/);
+});
+
 test("tags mentions with aliases and leaves the bot mention alone", () => {
   const parts = renderBatch([message(7, {
     segments: [{ type: "text", content: "@Masou @澪 来看" }],

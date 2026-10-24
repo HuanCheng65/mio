@@ -16,6 +16,23 @@ export function isQQOfficial(session: Session): boolean {
   return session.platform === "qq";
 }
 
+/**
+ * 官方 QQ 群消息的引用索引，放在原始事件的 message_scene.ext 里（"msg_idx=REFIDX_…" 这样的条目）。
+ * own 是这条消息自己的索引；quoted 只在引用消息里有，指向被引用的那条。
+ * 适配器解码时丢掉了这些字段，只能从原始事件里取。
+ */
+export function qqRefIndexes(session: Session): { own?: string; quoted?: string } {
+  const ext: unknown = (session.event._data as any)?.d?.message_scene?.ext;
+  if (!Array.isArray(ext)) return {};
+  const fields = new Map<string, string>();
+  for (const item of ext) {
+    if (typeof item !== "string") continue;
+    const at = item.indexOf("=");
+    if (at > 0) fields.set(item.slice(0, at), item.slice(at + 1));
+  }
+  return { own: fields.get("msg_idx"), quoted: fields.get("ref_msg_idx") };
+}
+
 /** 返回不能被动回复的原因；可以发送时返回 null。非官方 QQ 平台没有这些限制。 */
 export function passiveReplyBlocker(session: Session): string | null {
   if (!isQQOfficial(session)) return null;

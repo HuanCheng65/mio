@@ -4,6 +4,7 @@ import type { ImageSegment } from "../perception/types";
 import type { GroupRegistry } from "../runtime/groups";
 import type { EventStore, MioEventRow } from "./event-store";
 import type { MediaStore } from "./media-store";
+import { resolveQQReply } from "./qq-refs";
 
 type Logger = ReturnType<Context["logger"]>;
 
@@ -22,11 +23,12 @@ export function registerRecorder(
     events: EventStore;
     media: MediaStore;
     logger: Logger;
+    botName: string;
     /** 可在注册后追加（新运行时启动时加入） */
     listeners: RecordListener[];
   },
 ): void {
-  const { groups, normalizer, events, media, logger, listeners } = deps;
+  const { groups, normalizer, events, media, logger, botName, listeners } = deps;
 
   async function saveImages(groupId: string, segments: { type: string }[]): Promise<void> {
     for (const seg of segments) {
@@ -49,6 +51,7 @@ export function registerRecorder(
     const event = await events.append(groupId, async () => {
       const msg = await normalizer.normalize(session, true);
       await saveImages(groupId, msg.segments);
+      await resolveQQReply(ctx, events, groupId, msg, botName);
       return {
         kind: "message",
         platformMessageId: msg.id,
@@ -56,6 +59,7 @@ export function registerRecorder(
         isBot: msg.isBot,
         timestamp: msg.timestamp,
         body: msg,
+        refIdx: msg.refIdx ?? null,
       };
     });
     for (const listener of listeners) listener(groupId, session, event);

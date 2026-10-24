@@ -11,6 +11,7 @@ import { MessageNormalizer } from "./perception/normalizer";
 import { EventStore, extendEventTable } from "./agent/event-store";
 import { MediaStore } from "./agent/media-store";
 import { registerRecorder } from "./agent/recorder";
+import { extendSentRefTable, trackSentRefs } from "./agent/qq-refs";
 import { extendAliasTable } from "./agent/aliases";
 import { extendLogTable } from "./agent/log-store";
 import { extendNoteTable } from "./agent/notes";
@@ -37,6 +38,7 @@ export function apply(ctx: Context, config: MioConfig) {
   extendAliasTable(ctx);
   extendLogTable(ctx);
   extendNoteTable(ctx);
+  extendSentRefTable(ctx);
   extendMetaTable(ctx);
   extendTokenTable(ctx);
 
@@ -61,12 +63,14 @@ export function apply(ctx: Context, config: MioConfig) {
   const mediaDir = path.resolve(ctx.baseDir, "data/mio/media");
   const listeners: RecordListener[] = [];
   registerGroupCommands(ctx, groups, logger);
+  trackSentRefs(ctx, logger);
   registerRecorder(ctx, {
     groups,
     normalizer: new MessageNormalizer(null, config.botName),
     events,
     media: new MediaStore(mediaDir),
     logger,
+    botName: config.botName,
     listeners,
   });
 
