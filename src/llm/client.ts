@@ -170,13 +170,19 @@ export class LLMClient {
     }
 
     // 转换消息格式为 Gemini 格式
-    const geminiContents = this.convertToGeminiFormat(messages);
+    const { systemInstruction, contents: geminiContents } = this.convertToGeminiFormat(
+      messages,
+      Boolean(options?.cachedContent),
+    );
 
     // 构建配置
     const config: GenerateContentConfig = {
       temperature,
       maxOutputTokens: maxTokens,
     };
+    if (systemInstruction) {
+      config.systemInstruction = systemInstruction;
+    }
 
     // 由 reasoning 翻译决定 thinkingConfig
     const thinkingConfig = buildGeminiThinkingConfig(modelConfig);
@@ -239,17 +245,42 @@ export class LLMClient {
     };
   }
 
-  private convertToGeminiFormat(messages: ChatMessage[]): any[] {
+  /**
+   * system 消息走 systemInstruction。但使用显式缓存时，Gemini 不允许请求再带 systemInstruction
+   * （静态前缀已作为缓存的 systemInstruction），这时 system 文本只能作为开头的 user 内容发送。
+   * 相邻同角色的消息合并成一条，避免出现连续的 user 轮次。
+   */
+  private convertToGeminiFormat(
+    messages: ChatMessage[],
+    usesCachedContent: boolean,
+  ): { systemInstruction?: string; contents: any[] } {
     const contents: any[] = [];
+    const systemTexts: string[] = [];
+
+    const pushContent = (role: string, parts: any[]) => {
+      const last = contents[contents.length - 1];
+      if (last && last.role === role) {
+        last.parts.push(...parts);
+      } else {
+        contents.push({ role, parts });
+      }
+    };
 
     for (const msg of messages) {
+      if (msg.role === "system") {
+        if (typeof msg.content !== "string") {
+          throw new Error("Gemini system message must be plain text");
+        }
+        if (usesCachedContent) {
+          pushContent("user", [{ text: msg.content }]);
+        } else {
+          systemTexts.push(msg.content);
+        }
+        continue;
+      }
+
       // Gemini 使用 'user' 和 'model' 角色
-      const role =
-        msg.role === "assistant"
-          ? "model"
-          : msg.role === "system"
-            ? "user"
-            : msg.role;
+      const role = msg.role === "assistant" ? "model" : msg.role;
 
       // 处理多模态内容
       if (typeof msg.content === "string") {
@@ -288,7 +319,7 @@ export class LLMClient {
                 }
                 return item;
               });
-              contents.push({ role, parts });
+              pushContent(role, parts);
               continue;
             }
           } catch {
@@ -297,10 +328,7 @@ export class LLMClient {
         }
 
         // 普通文本消息
-        contents.push({
-          role,
-          parts: [{ text: msg.content }],
-        });
+        pushContent(role, [{ text: msg.content }]);
       } else if (Array.isArray(msg.content)) {
         // 已经是数组格式
         const parts = msg.content.map((item: any) => {
@@ -327,10 +355,13 @@ export class LLMClient {
           }
           return item;
         });
-        contents.push({ role, parts });
+        pushContent(role, parts);
       }
     }
 
-    return contents;
+    return {
+      systemInstruction: systemTexts.length > 0 ? systemTexts.join("\n\n") : undefined,
+      contents,
+    };
   }
 }

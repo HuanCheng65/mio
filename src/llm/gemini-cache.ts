@@ -79,7 +79,7 @@ export class GeminiCacheManager {
     const created = await this.ai.caches.create({
       model: input.modelName,
       config: {
-        contents: [{ role: "user", parts: [{ text: input.staticCoreText }] }],
+        systemInstruction: input.staticCoreText,
         displayName: `mio-static-${input.personaId}`,
         ttl: "3600s",
       },

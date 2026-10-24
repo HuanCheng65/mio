@@ -154,3 +154,30 @@ test("GeminiCacheManager deduplicates concurrent cache creation for the same key
   const [cacheA, cacheB] = await Promise.all([promiseA, promiseB]);
   assert.equal(cacheA.cacheName, cacheB.cacheName);
 });
+
+test("GeminiCacheManager stores the static core as the cache's systemInstruction", async () => {
+  const { ctx } = createFakeCtx();
+  let params: any;
+  const ai = {
+    caches: {
+      async create(p: any) {
+        params = p;
+        return { name: "cachedContents/x", expireTime: "2099-01-01T00:00:00.000Z" };
+      },
+      async delete() {},
+    },
+  } as any;
+  const manager = new GeminiCacheManager(ctx, ai);
+
+  await manager.ensureStaticCoreCache({
+    cacheKey: "abc",
+    modelName: "gemini-3-flash-preview",
+    personaId: "default",
+    personaHash: "hash-a",
+    promptVersion: "v1",
+    staticCoreText: "core",
+  });
+
+  assert.equal(params.config.systemInstruction, "core");
+  assert.equal(params.config.contents, undefined);
+});
