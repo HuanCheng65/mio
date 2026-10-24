@@ -124,6 +124,12 @@ export function registerRuntimeEvents(
     const groupId = session.event.channel?.id;
     if (!groupId || !config.enableGroups.includes(groupId)) return;
 
+    // 用户发的指令消息（带 koishi 命令前缀）不进入 LLM 视野
+    if (session.stripped?.prefix != null) {
+      logger.debug(`[${groupId}] 跳过指令消息: ${session.content?.slice(0, 40)}`);
+      return;
+    }
+
     const msg = await normalizer.normalize(session, false, buffer);
     const messageId = msg.id;
 
