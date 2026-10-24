@@ -1,6 +1,5 @@
 import { Context } from "koishi";
 import { } from "@koishijs/plugin-console";
-import { } from "@wittf/koishi-plugin-adapter-onebot";
 import { Config } from "./config";
 import type { Config as MioConfig } from "./config";
 import { reloadPrompts } from "./memory/prompt-manager";

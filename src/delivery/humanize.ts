@@ -30,7 +30,7 @@ function stripTitle(name: string): string {
 }
 
 /**
- * 将 message 中形如 @Xxx（非 @#数字 格式）的提及，
+ * 将 message 中形如 @Xxx（非 @#ID 格式）的提及，
  * 通过模糊匹配替换为 @#ID 格式。
  *
  * @param message  LLM 原始输出文本
@@ -41,7 +41,7 @@ export function resolveAtMentions(message: string, users: UserInfo[]): string {
 
   // 匹配 @ 后跟非空白且不是 # 开头的内容（即非 @#ID 格式）
   // 捕获到下一个空白、句末或字符串结尾
-  return message.replace(/@(?!#\d)([^\s@，。！？,.!?\n]+)/g, (full, rawName) => {
+  return message.replace(/@(?!#[0-9A-Za-z])([^\s@，。！？,.!?\n]+)/g, (full, rawName) => {
     const queryName = stripTitle(rawName);
     if (!queryName) return full;
 

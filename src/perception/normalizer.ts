@@ -2,6 +2,7 @@ import { Session } from "koishi";
 import { ImageProcessor } from "../pipeline/image-processor";
 import { MessageBuffer } from "../pipeline/message-buffer";
 import { getEmojiById } from "../emoji/lookup";
+import { getGroupMemberInfo, isOneBot } from "../platform/onebot";
 import {
   NormalizedMessage,
   MessageSegment,
@@ -33,7 +34,7 @@ export class MessageNormalizer {
     // 1. 处理 elements
     if (session.elements && session.elements.length > 0) {
       for (const el of session.elements) {
-        const result = await this.normalizeElement(el, session, skipImageUnderstanding);
+        const result = await this.normalizeElement(el, session, skipImageUnderstanding, buffer);
         if (result.segment) segments.push(result.segment);
         if (result.mention) mentions.push(result.mention);
       }
@@ -70,7 +71,8 @@ export class MessageNormalizer {
   private async normalizeElement(
     el: any,
     session: Session,
-    skipImageUnderstanding: boolean
+    skipImageUnderstanding: boolean,
+    buffer?: MessageBuffer,
   ): Promise<{ segment?: MessageSegment; mention?: MentionInfo }> {
     switch (el.type) {
       case 'text': {
@@ -86,7 +88,7 @@ export class MessageNormalizer {
         const isBot = targetId === botId;
         const displayName = isBot
           ? this.configBotName
-          : await this.resolveUserName(el, session);
+          : await this.resolveUserName(el, session, buffer);
 
         return {
           segment: { type: 'text', content: `@${displayName}` },
@@ -152,7 +154,7 @@ export class MessageNormalizer {
 
       case 'poke': {
         const target = el.attrs?.id;
-        const targetName = await this.resolveUserName(el, session);
+        const targetName = await this.resolveUserName(el, session, buffer);
         return {
           segment: {
             type: 'poke',
@@ -208,7 +210,7 @@ export class MessageNormalizer {
     if (quote.elements && quote.elements.length > 0) {
       const parts: string[] = [];
       for (const el of quote.elements) {
-        const result = await this.normalizeElement(el, session, true);
+        const result = await this.normalizeElement(el, session, true, buffer);
         if (!result.segment) continue;
         const seg = result.segment;
         switch (seg.type) {
@@ -298,8 +300,9 @@ export class MessageNormalizer {
   }
 
   /**
-   * 解析发送者的群内身份和自定义称号（async，带 TTL 缓存）。
-   * 因为消息事件本身不携带 role/title，需主动调 getGroupMemberInfo 拉取。
+   * 解析发送者的群内身份和自定义称号。
+   * OneBot：消息事件本身不携带 role/title，需主动调 getGroupMemberInfo 拉取（async，带 TTL 缓存）。
+   * 其他平台：读标准的 member.roles（官方 QQ 的 member_role 为 owner/admin/member），没有头衔。
    *
    * 返回: { role: '群主'|'管理员'|undefined, title: 自定义称号|undefined }
    */
@@ -311,6 +314,15 @@ export class MessageNormalizer {
     const userId = session.userId;
     if (!guildId || !userId) return { role: undefined, title: undefined };
 
+    if (!isOneBot(session)) {
+      const roleIds = (session.event?.member?.roles ?? []).map((r) => r.id);
+      const role: '群主' | '管理员' | undefined =
+        roleIds.includes('owner') ? '群主' :
+        roleIds.includes('admin') ? '管理员' :
+        undefined;
+      return { role, title: undefined };
+    }
+
     const cacheKey = `${guildId}:${userId}`;
     const cached = this.titleCache.get(cacheKey);
     if (cached && Date.now() < cached.expires) {
@@ -318,7 +330,7 @@ export class MessageNormalizer {
     }
 
     try {
-      const info = await session.bot.internal.getGroupMemberInfo(guildId, userId, false);
+      const info = await getGroupMemberInfo(session, guildId, userId);
 
       const role: '群主' | '管理员' | undefined =
         info?.role === 'owner' ? '群主' :
@@ -336,11 +348,22 @@ export class MessageNormalizer {
     }
   }
 
-  private async resolveUserName(el: any, session: Session): Promise<string> {
+  private async resolveUserName(el: any, session: Session, buffer?: MessageBuffer): Promise<string> {
     const targetId = el.attrs?.id;
     let name = el.attrs?.name;
 
-    if (!name && targetId && session.guildId) {
+    // 官方 QQ 的 @ 只带 openid、没有名字，也没有查成员的接口：从最近消息里找这个人的昵称
+    if (!name && targetId && buffer && session.cid) {
+      const recent = buffer.getRecent(session.cid);
+      for (let i = recent.length - 1; i >= 0; i--) {
+        if (recent[i].senderId === targetId) {
+          name = recent[i].sender;
+          break;
+        }
+      }
+    }
+
+    if (!name && targetId && session.guildId && await session.bot.supports('guild.member.get')) {
       try {
         const member = await session.bot.getGuildMember(session.guildId, targetId);
         name = member?.nick || member?.user?.nick || member?.user?.name;

@@ -123,7 +123,7 @@ export function registerRuntimeEvents(
   });
 
   ctx.on("message", async (session) => {
-    if (session.event.channel?.type !== 0) return;
+    if (session.isDirect) return;
     const groupId = session.cid;
     if (!groups.isActive(groupId)) return;
 

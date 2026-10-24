@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { createHash } from "node:crypto";
 import { Session, h } from "koishi";
-import type { OneBotBot } from "@wittf/koishi-plugin-adapter-onebot";
+import { isOneBot, setMsgEmojiLike } from "../platform/onebot";
 import { humanizedSend, resolveAtMentions, UserInfo } from "../delivery/humanize";
 import { getPromptManager } from "../memory/prompt-manager";
 import type { Action, LLMResponse, SearchRequest } from "../types/response";
@@ -237,7 +237,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
 
       if (action.type === "message") {
         if (!action.content.trim()) continue;
-        const processed = resolveAtMentions(action.content, usersSnapshot).replace(/@#(\d+)/g, '<at id="$1"/>');
+        const processed = resolveAtMentions(action.content, usersSnapshot).replace(/@#([0-9A-Za-z]+)/g, '<at id="$1"/>');
         await humanizedSend(session, processed);
         pushBotMessage(groupId, session.selfId, action.content);
         hasSentMessage = true;
@@ -249,7 +249,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         }
         if (!action.text?.trim()) continue;
 
-        const processed = resolveAtMentions(action.text, usersSnapshot).replace(/@#(\d+)/g, '<at id="$1"/>');
+        const processed = resolveAtMentions(action.text, usersSnapshot).replace(/@#([0-9A-Za-z]+)/g, '<at id="$1"/>');
         await humanizedSend(session, `<quote id="${realMsg.id}"/>${processed}`);
         pushBotMessage(groupId, session.selfId, action.text);
         hasSentMessage = true;
@@ -275,9 +275,15 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
           continue;
         }
 
+        if (!isOneBot(session)) {
+          // 表情回应目前只有 OneBot 能发（官方 QQ 群聊不支持）。react 的语义是"看到了但不说话"，
+          // 不支持的平台上跳过即等同于沉默；也不写入 buffer，避免模型以为自己点过表情。
+          logger.debug(`[${groupId}] ${session.platform} 不支持表情回应，跳过 react: ${action.emoji_name}`);
+          continue;
+        }
+
         try {
-          const bot = session.bot as OneBotBot<any>;
-          await bot.internal.setMsgEmojiLike(realMsg.id, emoji.id);
+          await setMsgEmojiLike(session, realMsg.id, emoji.id);
           buffer.handleReaction(realMsg.id, emoji.name, session.selfId, true, session.selfId);
           logger.debug(`[${groupId}] 对消息 ${action.target_msg_id} 发送表情: ${emoji.name}`);
         } catch (err) {
