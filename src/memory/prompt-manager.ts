@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import YAML from 'yaml'
+import { DATA_DIR } from '../paths'
 
 /**
  * Prompt 模板管理器（单例）
@@ -11,7 +12,7 @@ class PromptManager {
   private templates: Record<string, string> = {}
   private promptPath: string
 
-  private constructor(dataDir: string = resolve(__dirname, '../../data')) {
+  private constructor(dataDir: string = DATA_DIR) {
     this.promptPath = resolve(dataDir, 'prompts.yaml')
     this.load()
   }

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Context } from "koishi";
+import { DATA_DIR } from "../paths";
 import type { MioPersonaRow } from "./types";
 
 export interface PersonaRecord extends MioPersonaRow {}
@@ -32,7 +33,7 @@ function hashContent(content: string) {
 }
 
 function resolveSeedPath(seedFile: string) {
-  return resolve(__dirname, "../../data/persona", seedFile);
+  return resolve(DATA_DIR, "persona", seedFile);
 }
 
 export class PersonaService {

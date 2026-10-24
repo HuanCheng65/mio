@@ -6,17 +6,18 @@
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { DATA_DIR } from "../paths";
 
 /**
  * 加载人设文件
  */
 export function loadPersona(personaFile: string): string {
   try {
-    const personaPath = resolve(__dirname, "../../data/persona", personaFile);
+    const personaPath = resolve(DATA_DIR, "persona", personaFile);
     const content = readFileSync(personaPath, "utf-8");
     return content;
   } catch (error) {
-    const personaPath = resolve(__dirname, "../../data/persona", personaFile);
+    const personaPath = resolve(DATA_DIR, "persona", personaFile);
     throw new Error(`Failed to load persona file: ${personaFile} at ${personaPath}. Error: ${error}`);
   }
 }
