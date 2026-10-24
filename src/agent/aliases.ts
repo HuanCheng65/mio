@@ -87,6 +87,12 @@ export class AliasRegistry {
     return (await this.group(groupId)).get(userId)?.name ?? null;
   }
 
+  /** 按最近见到的昵称找人；同名时返回 undefined，让调用方要求用别名 */
+  async findByName(groupId: string, name: string): Promise<string | undefined> {
+    const matches = [...(await this.group(groupId))].filter(([, entry]) => entry.name === name);
+    return matches.length === 1 ? matches[0][0] : undefined;
+  }
+
   /** 别名转回平台 ID；未知别名返回 undefined，由调用方决定怎么告诉模型 */
   async userOf(groupId: string, alias: string): Promise<string | undefined> {
     const map = await this.group(groupId);

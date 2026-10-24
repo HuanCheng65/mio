@@ -86,7 +86,13 @@ export class AgentLog {
   constructor(
     private ctx: Context,
     private aliases: AliasRegistry,
-    private options: { botName: string; mediaDir: string; maxBatchEvents: number },
+    private options: {
+      botName: string;
+      mediaDir: string;
+      maxBatchEvents: number;
+      /** 给每批附上旁注（记忆的浮现）；在别名分配之后调用 */
+      annotate?: (groupId: string, events: MioEventRow[]) => Promise<string[]>;
+    },
   ) {}
 
   private serial<T>(groupId: string, run: () => Promise<T>): Promise<T> {
@@ -142,7 +148,8 @@ export class AgentLog {
         for (const row of rows) seqByMessageId.set(row.platformMessageId, row.seq);
       }
 
-      const content = renderBatch(events as MioEventRow[], { aliases, names, seqByMessageId, botName: this.options.botName, skipped });
+      const annotations = this.options.annotate ? await this.options.annotate(groupId, events as MioEventRow[]) : [];
+      const content = renderBatch(events as MioEventRow[], { aliases, names, seqByMessageId, botName: this.options.botName, skipped, annotations });
       return this.create(groupId, { role: "user", content }, events[events.length - 1].seq);
     });
   }

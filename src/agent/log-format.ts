@@ -14,6 +14,8 @@ export interface BatchContext {
   botName: string;
   /** 因积压过多而没有渲染的更早事件数 */
   skipped?: number;
+  /** 附在这一批末尾的旁注（人物卡片、隐约记得等） */
+  annotations?: string[];
 }
 
 const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -109,5 +111,6 @@ export function renderBatch(events: MioEventRow[], ctx: BatchContext): LogPart[]
       lines.push(renderMessage(event.seq, event.body as NormalizedMessage, ctx, images));
     }
   }
+  lines.push(...(ctx.annotations ?? []));
   return [{ type: "text", text: lines.join("\n") }, ...images];
 }
