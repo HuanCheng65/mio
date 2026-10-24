@@ -20,3 +20,5 @@ tsconfig.tsbuildinfo
 
 .claude
 .env
+.codex
+.tmp-playwright
