@@ -90,8 +90,8 @@ test("serializes images identically every time so the prefix stays cacheable", a
   const b = JSON.stringify(await log.toChatMessages(entries));
   assert.equal(a, b);
   const messages = await log.toChatMessages(entries);
-  assert.deepEqual((messages[0].content as any[]).map((p) => p.type), ["text", "text", "image_url"]);
-  assert.match((messages[0].content as any[])[2].image_url.url, /^data:image\/png;base64,/);
+  assert.deepEqual((messages[0].content as any[]).map((p) => p.type), ["text", "image_url"]);
+  assert.match((messages[0].content as any[])[1].image_url.url, /^data:image\/png;base64,/);
   assert.deepEqual(messages.slice(1), [
     { role: "assistant", content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "say", arguments: "{}" } }] },
     { role: "tool", tool_call_id: "c1", content: "ok" },

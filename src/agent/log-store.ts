@@ -138,8 +138,8 @@ export class AgentLog {
 
       let content: LogPart[] = [{ type: "text", text: preamble }];
       if (tail.length > 0) {
-        const [first, ...images] = await this.render(groupId, tail, { skipped: 0, annotate: false });
-        content = [{ type: "text", text: `${preamble}\n\n〔睡前最后看到的消息〕\n${(first as { text: string }).text}` }, ...images];
+        const [first, ...rest] = await this.render(groupId, tail, { skipped: 0, annotate: false });
+        content = [{ type: "text", text: `${preamble}\n\n〔睡前最后看到的消息〕\n${(first as { text: string }).text}` }, ...rest];
       }
       return this.create(groupId, { role: "user", content }, after, segment);
     });

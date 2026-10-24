@@ -77,23 +77,23 @@ test("names mentioned users who only appear as a platform id", () => {
   assert.match((known[0] as { text: string }).text, /21:03: @Masou#a2 还真是$/);
 });
 
-test("attaches saved images after the text and labels them by message", () => {
+test("places each saved image right after its message, labelled with the sender", () => {
   const parts = renderBatch([
     message(7, { segments: [
       { type: "text", content: "看" },
       { type: "image", url: "u1", description: null, isSticker: false, file: "a.png" },
       { type: "image", url: "u2", description: null, isSticker: false },
     ] }),
-    message(8, { segments: [{ type: "image", url: "u3", description: null, isSticker: true, file: "s.gif" }] }),
-  ], ctx());
+    message(8, { sender: "Masou", senderId: "U2", segments: [{ type: "image", url: "u3", description: null, isSticker: true, file: "s.gif" }] }),
+    message(9, { segments: [{ type: "text", content: "笑死" }] }),
+  ], ctx({ annotations: ["〔旁注〕"] }));
 
-  assert.equal((parts[0] as { text: string }).text.split("\n").slice(1).join("\n"),
-    "[m7] 白川#a1 21:03: 看[图1][图2：没能保存]\n[m8] 白川#a1 21:03: [表情包]");
-  assert.deepEqual(parts.slice(1), [
-    { type: "text", text: "[m7 的图1]" },
+  assert.deepEqual(parts, [
+    { type: "text", text: "〔10-23 周五〕\n[m7] 白川#a1 21:03: 看[图1][图2：没能保存]\n[m7 白川#a1 发的图1]" },
     { type: "image", file: "a.png" },
-    { type: "text", text: "[m8 的表情包]" },
+    { type: "text", text: "[m8] Masou#a2 21:03: [表情包]\n[m8 Masou#a2 发的表情包]" },
     { type: "image", file: "s.gif" },
+    { type: "text", text: "[m9] 白川#a1 21:03: 笑死\n〔旁注〕" },
   ]);
 });
 

@@ -53,7 +53,13 @@ function renderSegment(seg: MessageSegment): string {
   }
 }
 
-function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext, images: LogPart[]): string {
+interface RenderedMessage {
+  line: string;
+  /** 这条消息里保存下来的图，紧跟在这一行后面附上 */
+  images: { label: string; file: string }[];
+}
+
+function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext): RenderedMessage {
   const alias = ctx.aliases.get(msg.senderId);
   if (!msg.isBot && !alias) throw new Error(`renderBatch: no alias for sender ${msg.senderId}`);
   const who = msg.isBot ? `${ctx.botName}（你）` : `${msg.senderRole ? `【${msg.senderRole}】` : ""}${msg.sender}#${alias}`;
@@ -65,6 +71,7 @@ function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext, i
   }
 
   const imageSegs = msg.segments.filter((s): s is ImageSegment => s.type === "image");
+  const images: RenderedMessage["images"] = [];
   let imageIndex = 0;
   let body = "";
   for (const seg of msg.segments) {
@@ -80,7 +87,7 @@ function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext, i
       continue;
     }
     body += `[${kind}${n}]`;
-    images.push({ type: "text", text: `[m${seq} 的${kind}${n}]` }, { type: "image", file: seg.file });
+    images.push({ label: `[m${seq} ${who} 发的${kind}${n}]`, file: seg.file });
   }
 
   for (const mention of msg.mentions) {
@@ -92,25 +99,39 @@ function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext, i
     body = body.replace(`@${mention.displayName}`, `@${name}#${mentionAlias}`);
   }
 
-  return `[m${seq}] ${who} ${clock(msg.timestamp)}: ${reply}${body.trimStart()}`;
+  return { line: `[m${seq}] ${who} ${clock(msg.timestamp)}: ${reply}${body.trimStart()}`, images };
 }
 
-/** 把一批事件渲染成一条 user 消息的内容 */
+/**
+ * 把一批事件渲染成一条 user 消息的内容。第一个片段总是文字（日期开头）。
+ * 图片紧跟在发它的那一行后面并标上发送者：统一挂在末尾时，模型会按位置把图算到最后说话的人头上。
+ */
 export function renderBatch(events: MioEventRow[], ctx: BatchContext): LogPart[] {
   if (events.length === 0) throw new Error("renderBatch: empty batch");
-  const lines: string[] = [dateHeader(events[0].timestamp)];
+  const parts: LogPart[] = [];
+  let lines: string[] = [dateHeader(events[0].timestamp)];
   if (ctx.skipped) lines.push(`〔之前还有 ${ctx.skipped} 条消息没看到〕`);
+  const flush = () => {
+    if (lines.length > 0) parts.push({ type: "text", text: lines.join("\n") });
+    lines = [];
+  };
 
-  const images: LogPart[] = [];
   for (const event of events) {
     if (event.kind === "recall") {
       const body = event.body as { recalledMessageId: string; recalledBy: string };
       const target = ctx.seqByMessageId.get(body.recalledMessageId);
       lines.push(`〔${body.recalledBy || "有人"} 撤回了${target !== undefined ? ` m${target}` : "一条消息"}〕`);
-    } else {
-      lines.push(renderMessage(event.seq, event.body as NormalizedMessage, ctx, images));
+      continue;
+    }
+    const { line, images } = renderMessage(event.seq, event.body as NormalizedMessage, ctx);
+    lines.push(line);
+    for (const image of images) {
+      lines.push(image.label);
+      flush();
+      parts.push({ type: "image", file: image.file });
     }
   }
   lines.push(...(ctx.annotations ?? []));
-  return [{ type: "text", text: lines.join("\n") }, ...images];
+  flush();
+  return parts;
 }
