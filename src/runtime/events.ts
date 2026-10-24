@@ -122,16 +122,10 @@ export function registerRuntimeEvents(
     }
   });
 
-  ctx.on("message", async (session) => {
+  async function handleGroupMessage(session: Session): Promise<void> {
     if (session.isDirect) return;
     const groupId = session.cid;
     if (!groups.isActive(groupId)) return;
-
-    // 用户发的指令消息（带 koishi 命令前缀）不进入 LLM 视野
-    if (session.stripped?.prefix != null) {
-      logger.debug(`[${groupId}] 跳过指令消息: ${session.content?.slice(0, 40)}`);
-      return;
-    }
 
     const msg = await normalizer.normalize(session, false, buffer);
     const messageId = msg.id;
@@ -203,5 +197,18 @@ export function registerRuntimeEvents(
     deps.debouncer.onMessage(groupId, msg, engaged, async () => {
       await processConversation(groupId, session, engaged);
     });
+  }
+
+  // 群友消息走中间件：排在 Koishi 的指令中间件之后，被 Koishi 当成指令执行的消息（带前缀，或 @bot 加指令名）
+  // 不会传到这里，判断规则与 Koishi 完全一致，不依赖前缀配置。
+  ctx.middleware((session, next) => {
+    handleGroupMessage(session).catch((err) => logger.error(`[${session.cid}] 处理群消息失败:`, err));
+    return next();
+  });
+
+  // Koishi 不让 bot 自己发出的消息经过中间件，单独监听
+  ctx.on("message", (session) => {
+    if (session.userId !== session.selfId) return;
+    handleGroupMessage(session).catch((err) => logger.error(`[${session.cid}] 处理 bot 消息失败:`, err));
   });
 }
