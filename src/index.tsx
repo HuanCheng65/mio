@@ -11,6 +11,8 @@ import { MessageNormalizer } from "./perception/normalizer";
 import { EventStore, extendEventTable } from "./agent/event-store";
 import { MediaStore } from "./agent/media-store";
 import { registerRecorder } from "./agent/recorder";
+import { extendAliasTable } from "./agent/aliases";
+import { extendLogTable } from "./agent/log-store";
 import { registerConsoleShell } from "./console/shell";
 import { ConfigService } from "./console/config-service";
 import { registerConfigListeners } from "./console/config-listeners";
@@ -26,6 +28,8 @@ export function apply(ctx: Context, config: MioConfig) {
   extendPersonaTables(ctx);
   extendGroupFields(ctx);
   extendEventTable(ctx);
+  extendAliasTable(ctx);
+  extendLogTable(ctx);
 
   // Phase A — 无条件挂载 Console 入口与 config 编辑接口，配置坏了也能从 UI 修复
   registerConsoleShell(ctx);

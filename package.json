@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@koishijs/client": "^5.11.0",
+    "@koishijs/plugin-database-sqlite": "^4.6.0",
     "@types/node": "^20.0.0",
     "playwright": "^1.59.1",
     "typescript": "^5.0.0",
