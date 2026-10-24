@@ -67,13 +67,17 @@ export const Config: Schema<Config> = Schema.object({
 
   providers: Schema.array(
     Schema.object({
-      id: Schema.string().required().description("供应商 ID（自定义，如 deepseek-main）"),
+      id: Schema.string().required().description("供应商 ID（自动生成，无需手填）"),
       name: Schema.string().required().description("供应商名称（显示用）"),
       type: Schema.union(["openai", "gemini"] as const)
         .default("openai")
         .description("供应商类型（openai: OpenAI-compatible API, gemini: Google Gemini API）"),
-      apiKey: Schema.string().required().description("API Key"),
+      apiKey: Schema.string().role("secret").required().description("API Key"),
       baseUrl: Schema.string().description("API Base URL（仅 OpenAI-compatible 需要）"),
+      dialect: Schema.union(["openai", "deepseek", "qwen", "openrouter", "siliconflow", "custom"] as const)
+        .description("OpenAI 兼容方言（控制 reasoning 字段翻译；type=gemini 时忽略）"),
+      extraHeaders: Schema.dict(Schema.string()).description("附加请求头（type=openai）"),
+      extraBody: Schema.dict(Schema.any()).description("附加请求体字段（type=openai，每次请求合入）"),
     }),
   )
     .default([
@@ -83,6 +87,9 @@ export const Config: Schema<Config> = Schema.object({
         type: "openai",
         apiKey: "",
         baseUrl: "https://api.deepseek.com",
+        dialect: "deepseek",
+        extraHeaders: {},
+        extraBody: {},
       },
     ])
     .description("LLM 供应商配置"),
@@ -93,14 +100,24 @@ export const Config: Schema<Config> = Schema.object({
       modelName: Schema.string().default("deepseek-chat").description("模型名称"),
       temperature: Schema.number().default(0.9).description("温度参数"),
       maxTokens: Schema.number().default(200).description("最大 Token 数"),
-      thinkingBudget: Schema.number().description("Gemini thinking 预算 token 数（0=禁用，不填=模型默认）"),
+      reasoning: Schema.object({
+        mode: Schema.union(["auto", "off", "effort", "budget"] as const).description("推理模式"),
+        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const).description("Effort 等级（OpenAI / OpenRouter / DeepSeek）"),
+        budgetTokens: Schema.number().description("预算 token 数（Gemini / Qwen）"),
+      }).description("推理控制（按 dialect 翻译到具体协议）"),
+      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
     }).description("对话生成模型"),
     vision: Schema.object({
       providerId: Schema.string().default("deepseek").description("使用的供应商 ID"),
       modelName: Schema.string().default("deepseek-chat").description("多模态模型名称（如 gpt-4o-mini）"),
       temperature: Schema.number().default(0.5).description("温度参数"),
-      maxTokens: Schema.number().default(500).description("最大 Token 数（Gemini thinking 模型需要更大值）"),
-      thinkingBudget: Schema.number().description("Gemini thinking 预算 token 数（0=禁用，不填=模型默认）"),
+      maxTokens: Schema.number().default(500).description("最大 Token 数"),
+      reasoning: Schema.object({
+        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
+        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
+        budgetTokens: Schema.number(),
+      }).description("推理控制"),
+      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
     }).description("图片理解模型"),
   }).description("模型配置"),
 
@@ -131,12 +148,24 @@ export const Config: Schema<Config> = Schema.object({
       modelName: Schema.string().default("deepseek-chat").description("记忆提取模型名称"),
       temperature: Schema.number().default(0.3).description("温度参数"),
       maxTokens: Schema.number().default(800).description("最大 Token 数"),
+      reasoning: Schema.object({
+        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
+        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
+        budgetTokens: Schema.number(),
+      }).description("推理控制"),
+      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
     }).description("记忆提取模型配置（建议用便宜模型）"),
     distillation: Schema.object({
       providerId: Schema.string().default("deepseek").description("蒸馏供应商 ID"),
       modelName: Schema.string().default("deepseek-chat").description("蒸馏模型名称"),
       temperature: Schema.number().default(0.3).description("温度参数"),
       maxTokens: Schema.number().default(1000).description("最大 Token 数"),
+      reasoning: Schema.object({
+        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
+        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
+        budgetTokens: Schema.number(),
+      }).description("推理控制"),
+      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
     }).description("蒸馏模型配置（可复用提取模型）"),
     distillationHour: Schema.number().default(3).description("每日蒸馏时间（0-23，默认凌晨 3 点）"),
     flushIntervalMs: Schema.number().default(300000).description("Working Memory flush 间隔（毫秒）"),
@@ -155,6 +184,12 @@ export const Config: Schema<Config> = Schema.object({
       modelName: Schema.string().default("deepseek-chat").description("搜索结果压缩模型名称"),
       temperature: Schema.number().default(0).description("温度参数（压缩任务建议 0）"),
       maxTokens: Schema.number().default(150).description("最大 Token 数"),
+      reasoning: Schema.object({
+        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
+        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
+        budgetTokens: Schema.number(),
+      }).description("推理控制"),
+      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
     }).description("搜索结果压缩模型配置（建议用便宜快速的模型）"),
   }).description("搜索增强配置"),
 

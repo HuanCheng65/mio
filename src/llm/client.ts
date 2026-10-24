@@ -1,7 +1,8 @@
 import OpenAI from "openai";
-import { ProviderManager, ModelConfig } from "./provider";
+import { ProviderManager, ModelConfig, ProviderConfig } from "./provider";
 import { GenerateContentConfig } from "@google/genai";
 import { tokenTracker } from "./token-tracker";
+import { buildGeminiThinkingConfig, buildOpenAIReasoningBody } from "./reasoning";
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -51,6 +52,7 @@ export class LLMClient {
       ? await this.chatGemini(
           messages,
           modelConfig,
+          providerConfig,
           temperature,
           maxTokens,
           signal,
@@ -60,6 +62,7 @@ export class LLMClient {
       : await this.chatOpenAI(
           messages,
           modelConfig,
+          providerConfig,
           temperature,
           maxTokens,
           signal,
@@ -80,6 +83,7 @@ export class LLMClient {
   private async chatOpenAI(
     messages: ChatMessage[],
     modelConfig: ModelConfig,
+    providerConfig: ProviderConfig,
     temperature: number,
     maxTokens: number,
     signal?: AbortSignal,
@@ -120,6 +124,19 @@ export class LLMClient {
       requestParams.response_format = { type: "json_object" };
     }
 
+    // dialect-aware reasoning 翻译
+    Object.assign(requestParams, buildOpenAIReasoningBody(providerConfig, modelConfig));
+
+    // provider 级 extraBody（每次请求合入）
+    if (providerConfig.extraBody) {
+      Object.assign(requestParams, providerConfig.extraBody);
+    }
+
+    // model 级 extraBody（仅本次请求，优先级最高）
+    if (modelConfig.extraBody) {
+      Object.assign(requestParams, modelConfig.extraBody);
+    }
+
     const response = await provider.chat.completions.create(
       requestParams,
       signal ? { signal } : undefined,
@@ -138,6 +155,7 @@ export class LLMClient {
   private async chatGemini(
     messages: ChatMessage[],
     modelConfig: ModelConfig,
+    _providerConfig: ProviderConfig,
     temperature: number,
     maxTokens: number,
     signal?: AbortSignal,
@@ -160,11 +178,10 @@ export class LLMClient {
       maxOutputTokens: maxTokens,
     };
 
-    // 根据配置决定 thinking 预算
-    if (modelConfig.thinkingBudget !== undefined) {
-      config.thinkingConfig = { thinkingBudget: modelConfig.thinkingBudget };
-    } else if (modelConfig.enableThinking === false) {
-      config.thinkingConfig = { thinkingBudget: 0 };
+    // 由 reasoning 翻译决定 thinkingConfig
+    const thinkingConfig = buildGeminiThinkingConfig(modelConfig);
+    if (thinkingConfig) {
+      config.thinkingConfig = thinkingConfig;
     }
 
     // 添加 JSON mode 支持（Gemini 使用 responseMimeType）

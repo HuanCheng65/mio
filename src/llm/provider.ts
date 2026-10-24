@@ -3,12 +3,26 @@ import { GoogleGenAI } from '@google/genai';
 
 export type ProviderType = 'openai' | 'gemini';
 
+export type OpenAIDialect = 'openai' | 'deepseek' | 'qwen' | 'openrouter' | 'siliconflow' | 'custom';
+
+export type ReasoningMode = 'auto' | 'off' | 'effort' | 'budget';
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'max';
+
+export interface ReasoningConfig {
+  mode?: ReasoningMode;
+  effort?: ReasoningEffort;
+  budgetTokens?: number;
+}
+
 export interface ProviderConfig {
   id: string;
   name: string;
   type: ProviderType;
   apiKey: string;
-  baseUrl?: string; // 仅 OpenAI-compatible 需要
+  baseUrl?: string;                          // 仅 OpenAI-compatible 需要
+  dialect?: OpenAIDialect;                   // 仅 type=openai 时生效，控制 reasoning/extra 字段翻译
+  extraHeaders?: Record<string, string>;     // 仅 type=openai，附加请求头
+  extraBody?: Record<string, any>;           // 仅 type=openai，每次请求合入的请求体字段
 }
 
 export interface ModelConfig {
@@ -16,8 +30,8 @@ export interface ModelConfig {
   modelName: string;
   temperature?: number;
   maxTokens?: number;
-  enableThinking?: boolean;   // 是否启用 Gemini thinking mode
-  thinkingBudget?: number;    // Gemini thinking token 预算（设置后覆盖 enableThinking）
+  reasoning?: ReasoningConfig;               // 规范化推理控制，由 LLMClient 按 (type, dialect) 翻译
+  extraBody?: Record<string, any>;           // 仅本次请求合入的请求体字段
 }
 
 export class ProviderManager {
@@ -46,6 +60,7 @@ export class ProviderManager {
         new OpenAI({
           apiKey: config.apiKey,
           baseURL: config.baseUrl,
+          defaultHeaders: config.extraHeaders,
         })
       );
     }
