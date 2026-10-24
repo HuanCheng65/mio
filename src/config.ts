@@ -5,8 +5,6 @@ export interface Config {
   botName: string;
   botAliases: string[];
   personaFile: string;
-  enableGroups: string[];
-  shadowGroups: string[];
   providers: ProviderConfig[];
   models: {
     chat: ModelConfig;
@@ -57,12 +55,6 @@ export const Config: Schema<Config> = Schema.object({
     .default(["みお", "小澪"])
     .description("Bot 别名"),
   personaFile: Schema.string().default("mio.md").description("人设文件名"),
-  enableGroups: Schema.array(Schema.string().pattern(/^\d+$/))
-    .default([])
-    .description("启用的群号"),
-  shadowGroups: Schema.array(Schema.string().pattern(/^\d+$/))
-    .default([])
-    .description("影子模式群号（正常推理但不发送消息，记录到日志）"),
   bufferSize: Schema.number().default(50).description("消息缓冲区大小"),
 
   providers: Schema.array(

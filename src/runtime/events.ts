@@ -2,6 +2,7 @@ import { getEmojiById } from "../emoji/lookup";
 import type { Session } from "koishi";
 import { RuntimeDeps, RuntimeState } from "./types";
 import { isMentioningBot } from "../helpers";
+import { toGroupId } from "./groups";
 
 export function registerRuntimeEvents(
   deps: RuntimeDeps,
@@ -9,7 +10,7 @@ export function registerRuntimeEvents(
   processConversation: (groupId: string, session: Session, isMentioned?: boolean) => Promise<void>,
   triggerMemoryExtraction: (groupId: string, reason: string) => Promise<void>,
 ): void {
-  const { buffer, config, ctx, extractionScheduler, imageProcessor, logger, normalizer, renderer, stickerService } = deps;
+  const { buffer, config, ctx, extractionScheduler, groups, imageProcessor, logger, normalizer, renderer, stickerService } = deps;
 
   function resolveNameFromBuffer(groupId: string, userId: string): string {
     const recent = buffer.getRecent(groupId);
@@ -59,8 +60,9 @@ export function registerRuntimeEvents(
       | undefined;
     if (!data || data.notice_type !== "group_ban") return;
 
-    const groupId = String(data.group_id ?? "");
-    if (!groupId || !config.enableGroups.includes(groupId)) return;
+    if (data.group_id === undefined) return;
+    const groupId = toGroupId(session.platform, String(data.group_id));
+    if (!groups.isActive(groupId)) return;
 
     const userId = String(data.user_id ?? "");
     const operatorId = String(data.operator_id ?? "");
@@ -104,8 +106,9 @@ export function registerRuntimeEvents(
   });
 
   ctx.on("message-deleted", async (session) => {
-    const groupId = session.event?.channel?.id || session.guildId;
-    if (!groupId || !config.enableGroups.includes(groupId)) return;
+    if (session.isDirect || !session.channelId) return;
+    const groupId = session.cid;
+    if (!groups.isActive(groupId)) return;
     const recalledMsgId = session.messageId;
     if (!recalledMsgId) return;
 
@@ -121,8 +124,8 @@ export function registerRuntimeEvents(
 
   ctx.on("message", async (session) => {
     if (session.event.channel?.type !== 0) return;
-    const groupId = session.event.channel?.id;
-    if (!groupId || !config.enableGroups.includes(groupId)) return;
+    const groupId = session.cid;
+    if (!groups.isActive(groupId)) return;
 
     // 用户发的指令消息（带 koishi 命令前缀）不进入 LLM 视野
     if (session.stripped?.prefix != null) {

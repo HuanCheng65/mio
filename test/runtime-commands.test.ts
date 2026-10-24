@@ -8,6 +8,9 @@ function createFakeCommandCtx() {
   const ctx = {
     command(name: string) {
       return {
+        channelFields() {
+          return this;
+        },
         action(handler: (...args: any[]) => any) {
           actions.set(name, handler);
           return this;
@@ -26,7 +29,7 @@ test("mio.reload invalidates existing Gemini explicit caches after reloading pro
   registerAdminCommands({
     ctx: ctx as any,
     logger: console,
-    config: { enableGroups: [] } as any,
+    groups: { list: () => [], isShadow: () => false } as any,
     geminiCacheManager: {
       async invalidateAllCaches() {
         invalidated += 1;
@@ -36,7 +39,7 @@ test("mio.reload invalidates existing Gemini explicit caches after reloading pro
     botMutedGroups: new Map(),
     activeRequests: new Map(),
     hourlyReplies: new Map(),
-  } as any);
+  } as any, async () => {});
 
   await actions.get("mio.reload")!();
 

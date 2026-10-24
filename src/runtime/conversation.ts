@@ -35,6 +35,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
     stickerService,
     personaService,
     geminiCacheManager,
+    groups,
   } = deps;
 
   async function resolvePersonaAndCache(groupId: string): Promise<{
@@ -479,7 +480,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         return;
       }
 
-      if (shadowLogger && config.shadowGroups.includes(groupId)) {
+      if (groups.isShadow(groupId)) {
         const messageSummary = originalNewMessages.map((m) => ({
           sender: m.sender,
           content: m.segments.map((s) => ("content" in s ? s.content : null) || `[${s.type}]`).join(""),
@@ -678,7 +679,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
       logger.debug(`冲动: ${parsedResponse.urge ?? "N/A"} → ${parsedResponse.silent ? "沉默" : "说话"}`);
 
       // Shadow mode: log and skip all actions
-      if (shadowLogger && config.shadowGroups.includes(groupId)) {
+      if (groups.isShadow(groupId)) {
         const messageSummary = newMessages.map((m) => ({
           sender: m.sender,
           content: m.segments.map((s) => ("content" in s ? s.content : null) || `[${s.type}]`).join(""),

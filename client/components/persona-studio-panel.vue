@@ -128,16 +128,15 @@
               <Link2 :size="14" />
               <h3>群绑定</h3>
             </div>
-            <p class="section-desc">绑定群到当前人设，解绑后回退到默认。</p>
+            <p class="section-desc">绑定群到当前人设，解绑后回退到默认。群 ID 形如 qq:xxxx，在群里开启 mio 时的回复里会给出。</p>
 
             <div class="bind-form">
               <input
                 v-model.trim="bindGroupId"
                 class="form-input"
                 type="text"
-                inputmode="numeric"
-                placeholder="输入群号"
-                aria-label="绑定群号"
+                placeholder="输入群 ID"
+                aria-label="绑定群 ID"
               />
               <button class="btn btn--ghost" type="button" @click="bindCurrentGroup" :disabled="busyAction || !bindGroupId">
                 绑定

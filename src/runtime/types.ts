@@ -14,6 +14,7 @@ import { StickerService } from "../sticker";
 import { ShadowLogger } from "../shadow-logger";
 import { PersonaService } from "../persona/service";
 import { GeminiCacheManager } from "../llm/gemini-cache";
+import { GroupRegistry } from "./groups";
 
 export interface ImageTask {
   messageId: string;
@@ -45,7 +46,8 @@ export interface RuntimeDeps {
   extractionScheduler: MemoryExtractionScheduler | null;
   searchService: SearchService | null;
   stickerService: StickerService | null;
-  shadowLogger: ShadowLogger | null;
+  shadowLogger: ShadowLogger;
   personaService: PersonaService;
   geminiCacheManager: GeminiCacheManager | null;
+  groups: GroupRegistry;
 }

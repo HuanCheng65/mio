@@ -1,11 +1,37 @@
 import { reloadPrompts } from "../memory/prompt-manager";
 import { tokenTracker } from "../llm/token-tracker";
 import type { RuntimeDeps, RuntimeState } from "./types";
+import type { MioGroupMode } from "./groups";
 
-export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): void {
-  const { ctx, logger, config, geminiCacheManager } = deps;
+const MODE_LABELS: Record<MioGroupMode, string> = {
+  on: "已在本群开启",
+  shadow: "已在本群开启影子模式（正常推理但不发送消息，记录到日志）",
+  off: "已在本群关闭",
+};
+
+export function registerAdminCommands(
+  deps: RuntimeDeps,
+  state: RuntimeState,
+  preloadGroup: (groupId: string) => Promise<void>,
+): void {
+  const { ctx, logger, groups, geminiCacheManager } = deps;
 
   ctx.command("mio", "澪管理指令", { authority: 4 });
+
+  for (const mode of ["on", "shadow", "off"] as const) {
+    ctx
+      .command(`mio.${mode}`, MODE_LABELS[mode].replace(/^已在/, "在"), { authority: 4 })
+      .channelFields(["mioMode"])
+      .action(async ({ session }) => {
+        if (!session || session.isDirect) return "请在群里使用这个指令";
+        const groupId = session.cid;
+        session.channel.mioMode = mode;
+        groups.set(groupId, mode);
+        logger.info(`[admin] ${groupId} 切换为 ${mode}`);
+        if (mode !== "off") await preloadGroup(groupId);
+        return `${MODE_LABELS[mode]}（群 ID: ${groupId}）`;
+      });
+  }
 
   ctx.command("mio.reload", "重载 prompt 模板和人设文件", { authority: 4 }).action(async () => {
     try {
@@ -24,7 +50,8 @@ export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): v
   ctx.command("mio.status", "查看运行状态", { authority: 4 }).action(async () => {
     const lines: string[] = [];
 
-    lines.push(`监听群: ${config.enableGroups.join(", ")}`);
+    const enabled = groups.list().map((g) => (groups.isShadow(g) ? `${g}（影子）` : g));
+    lines.push(`监听群: ${enabled.length > 0 ? enabled.join(", ") : "无"}`);
 
     const mutedGroups = [...state.botMutedGroups.entries()].filter(([, v]) => v).map(([k]) => k);
     lines.push(`静默群: ${mutedGroups.length > 0 ? mutedGroups.join(", ") : "无"}`);
@@ -43,14 +70,14 @@ export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): v
   });
 
   ctx.command("mio.mute <groupId:string>", "静默指定群", { authority: 4 }).action(async (_, groupId) => {
-    if (!groupId) return "请指定群号";
+    if (!groupId) return "请指定群 ID（形如 qq:xxxx，可用 mio.status 查看）";
     state.botMutedGroups.set(groupId, true);
     logger.info(`[admin] 手动静默群 ${groupId}`);
     return `已静默群 ${groupId}`;
   });
 
   ctx.command("mio.unmute <groupId:string>", "解除指定群静默", { authority: 4 }).action(async (_, groupId) => {
-    if (!groupId) return "请指定群号";
+    if (!groupId) return "请指定群 ID（形如 qq:xxxx，可用 mio.status 查看）";
     state.botMutedGroups.delete(groupId);
     logger.info(`[admin] 解除群 ${groupId} 静默`);
     return `已解除群 ${groupId} 的静默`;

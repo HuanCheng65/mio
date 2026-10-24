@@ -144,14 +144,14 @@ export class MemoryExtractionScheduler {
    * @param enabledGroups 启用的群列表
    * @param callback 检查到超时时的回调
    */
-  startTimeoutChecker(enabledGroups: string[], callback: (groupId: string) => void): void {
+  startTimeoutChecker(getEnabledGroups: () => string[], callback: (groupId: string) => void): void {
     this.onTimeoutCheck = callback;
 
     // 每 5 分钟检查一次所有群
     const CHECK_INTERVAL_MS = 5 * 60_000;
 
     this.timeoutCheckTimer = setInterval(() => {
-      for (const groupId of enabledGroups) {
+      for (const groupId of getEnabledGroups()) {
         const decision = this.checkShouldExtract(groupId);
         if (decision.shouldExtract && decision.reason === 'timeout') {
           callback(groupId);
