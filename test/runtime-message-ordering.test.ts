@@ -23,7 +23,7 @@ function createMessage(input: Partial<NormalizedMessage> & { id: string; sender:
   };
 }
 
-test("renderer keeps chronological order and marks new messages inline", () => {
+test("renderer separates new messages with a divider and exposes new portion", () => {
   const renderer = new ContextRenderer();
   const messages: NormalizedMessage[] = [
     createMessage({
@@ -45,14 +45,16 @@ test("renderer keeps chronological order and marks new messages inline", () => {
     }),
   ];
 
-  const { text } = renderer.render(messages, new Set(["u1"]));
+  const { text, newMessagesText, msgMap } = renderer.render(messages, new Set(["b1"]));
 
-  const idxUser = text.indexOf("older user message");
-  const idxBot = text.indexOf("newer bot message");
-  assert.notEqual(idxUser, -1);
-  assert.notEqual(idxBot, -1);
-  assert.ok(idxUser < idxBot, "older user message should appear before newer bot message");
-  assert.match(text, /\[新消息\].*older user message/);
+  const idxOld = text.indexOf("older user message");
+  const idxDivider = text.indexOf("以下是你刚划到的新消息");
+  const idxNew = text.indexOf("newer bot message");
+  assert.ok(idxOld >= 0 && idxDivider > idxOld && idxNew > idxDivider);
+  assert.match(newMessagesText, /\[m2\] .*newer bot message/);
+  assert.doesNotMatch(newMessagesText, /older user message/);
+  assert.equal(msgMap.get("m1")?.id, "u1");
+  assert.equal(msgMap.get("m2")?.id, "b1");
 });
 
 test("renderer can omit selected messages from history rendering", () => {

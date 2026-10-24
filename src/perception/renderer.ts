@@ -19,7 +19,7 @@ export class ContextRenderer {
       return `〔系统 ${time}〕${content}`;
     }
 
-    const selfPrefix = (includePrefix && msg.isBot) ? '[你之前说的] ' : '';
+    const selfPrefix = (includePrefix && msg.isBot) ? '[你之前说了] ' : '';
     const rolePrefix = msg.senderRole ? `【${msg.senderRole}】` : '';
     const titleSuffix = msg.senderTitle ? `【${msg.senderTitle}】` : '';
 
@@ -48,8 +48,9 @@ export class ContextRenderer {
     messages: NormalizedMessage[],
     newMessageIds: Set<string>,
     excludedMessageIds: Set<string> = new Set(),
-  ): { text: string; msgMap: Map<string, NormalizedMessage> } {
-    const lines: string[] = [];
+  ): { text: string; msgMap: Map<string, NormalizedMessage>; newMessagesText: string } {
+    const historyLines: string[] = [];
+    const newLines: string[] = [];
     const msgMap = new Map<string, NormalizedMessage>();
     let counter = 0;
 
@@ -66,18 +67,29 @@ export class ContextRenderer {
       let line = this.renderMessage(msg);
       if (!line) continue;
 
-      // 分配短 ID
-      const shortId = `m${++counter}`;
-      msgMap.set(shortId, msg);
-      line = `[${shortId}] ${line}`;
+      // 系统事件不分配短 ID（不能 reply/react，没必要给目标）
+      if (!msg.isSystemEvent) {
+        const shortId = `m${++counter}`;
+        msgMap.set(shortId, msg);
+        line = `[${shortId}] ${line}`;
+      }
 
       if (newMessageIds.has(msg.id)) {
-        line = `[新消息] ${line}`;
+        newLines.push(line);
+      } else {
+        historyLines.push(line);
       }
-      lines.push(line);
     }
 
-    return { text: lines.join('\n'), msgMap };
+    const newMessagesText = newLines.join('\n');
+    const parts: string[] = [];
+    if (historyLines.length > 0) parts.push(historyLines.join('\n'));
+    if (newLines.length > 0) {
+      parts.push('--- 以下是你刚划到的新消息 ---');
+      parts.push(newMessagesText);
+    }
+
+    return { text: parts.join('\n'), msgMap, newMessagesText };
   }
 
   private renderReactions(msg: NormalizedMessage): string {

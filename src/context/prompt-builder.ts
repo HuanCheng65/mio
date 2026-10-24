@@ -15,7 +15,11 @@ interface PromptOptions {
   recentSummary?: string;
   backgroundKnowledge?: string;
   stickerSummary?: string;
+}
+
+interface UserPromptOptions {
   recentMessages: string;
+  recentBotCount: number;
 }
 
 interface StaticCoreOptions {
@@ -126,36 +130,30 @@ export class PromptBuilder {
       parts.push(options.stickerSummary);
     }
 
-    // 当前时间（放在记忆之后、消息记录之前，避免破坏记忆的缓存）
-    const now = new Date();
-    const lunar = Lunar.fromDate(now);
-    const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-    const timeInfo = `\n---\n# 当前时间\n${now.getFullYear()}年${(now.getMonth() + 1).toString().padStart(2, "0")}月${now.getDate().toString().padStart(2, "0")}日 ${weekdays[now.getDay()]} ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}\n农历${lunar.getYearInChinese()}年${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}`;
-    parts.push(timeInfo);
-
-    // 群聊消息记录（每次都变）
-    parts.push("\n");
-    parts.push(promptManager.getRaw("chat_system_history_prefix"));
-    parts.push(`\n${options.recentMessages}`);
-
-    // 尾部锚定（利用 recency bias 强化核心行为）
-    parts.push("\n\n");
-    parts.push(promptManager.getRaw("chat_system_anchor"));
-
     return parts.join("\n");
   }
 
   /**
-   * 构建 User Prompt（简化版，格式说明已移到 system）
+   * 构建 User Prompt（包含时间、recent history、anchor，每轮都变）
    */
-  buildUserPrompt(newMessageMarker: string, recentBotCount: number): string {
+  buildUserPrompt(options: UserPromptOptions): string {
     const activity =
-      recentBotCount > 0
-        ? `（你最近 5 分钟内说了 ${recentBotCount} 条消息。）\n`
+      options.recentBotCount > 0
+        ? `（你最近 5 分钟内说了 ${options.recentBotCount} 条消息。）\n`
         : "";
     return promptManager.get("chat_user_simple", {
-      newMessages: newMessageMarker,
+      currentTime: this.buildTimeInfo(),
+      recentMessages: options.recentMessages,
       recentBotActivity: activity,
+      historyPrefix: promptManager.getRaw("chat_history_prefix"),
+      anchor: promptManager.getRaw("chat_anchor"),
     });
+  }
+
+  buildTimeInfo(): string {
+    const now = new Date();
+    const lunar = Lunar.fromDate(now);
+    const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+    return `${now.getFullYear()}年${(now.getMonth() + 1).toString().padStart(2, "0")}月${now.getDate().toString().padStart(2, "0")}日 ${weekdays[now.getDay()]} ${now.getHours().toString().padStart(2, "0")}:${now.getMinutes().toString().padStart(2, "0")}\n农历${lunar.getYearInChinese()}年${lunar.getMonthInChinese()}月${lunar.getDayInChinese()}`;
   }
 }

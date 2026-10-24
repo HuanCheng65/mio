@@ -360,13 +360,13 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         }
         const imageSegs = targetMsg.segments.filter((s): s is ImageSegment => s.type === "image");
         if (imageSegs.length === 0) return null;
+        // imageIndex 已由调用方（search/router）转换为 0-based
         const safeIndex = imageIndex >= 0 && imageIndex < imageSegs.length ? imageIndex : 0;
         return imageSegs[safeIndex]?.url ?? null;
       };
       const searchInjection = await searchService.search(searchRequest, resolveImageUrl);
       logger.debug(`[${groupId}] 搜索结果: ${searchInjection}`);
 
-      const newMessagesText = originalNewMessages.map((m) => renderer.renderMessage(m)).join("\n");
       const fiveMinAgoSearch = Date.now() - 5 * 60_000;
       const recentBotCountSearch = buffer
         .getRecent(groupId)
@@ -374,19 +374,23 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
       const recentBotActivitySearch =
         recentBotCountSearch > 0 ? `（你最近 5 分钟内说了 ${recentBotCountSearch} 条消息。）\n` : "";
 
-      const promptManager = getPromptManager();
-      const followupPrompt = promptManager.get("search_followup_prompt", {
-        newMessages: newMessagesText,
-        searchInjection,
-        recentBotActivity: recentBotActivitySearch,
-      });
-
       const allMessagesForSearch = buffer.getRecent(groupId);
       const newMessageIdsForSearch = new Set(originalNewMessages.map((m) => m.id));
-      const { text: recentMessagesFormatted, msgMap: searchMsgMap } = renderer.render(
-        allMessagesForSearch,
-        new Set(),
-        newMessageIdsForSearch,
+      const { text: recentMessagesFormatted, msgMap: searchMsgMap, newMessagesText: searchNewMessagesText } =
+        renderer.render(allMessagesForSearch, newMessageIdsForSearch, new Set());
+
+      const promptManager = getPromptManager();
+      const followupPrompt = promptManager.get("search_followup_prompt", {
+        currentTime: promptBuilder.buildTimeInfo(),
+        recentMessages: recentMessagesFormatted,
+        searchInjection,
+        recentBotActivity: recentBotActivitySearch,
+        historyPrefix: promptManager.getRaw("chat_history_prefix"),
+        anchor: promptManager.getRaw("chat_anchor"),
+      });
+
+      logger.debug(
+        `[${groupId}] 搜索回合本轮新消息 (${originalNewMessages.length} 条):\n${searchNewMessagesText}`,
       );
 
       let memoryUserProfile = "";
@@ -410,7 +414,6 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
       const systemPrompt = promptBuilder.buildSystemPrompt({
         personaContent,
         includeStaticCore: !cachedContent,
-        recentMessages: recentMessagesFormatted,
         userProfile: memoryUserProfile,
         groupCulture: memoryGroupCulture,
         memories: memoryMemories,
@@ -568,7 +571,6 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         return;
       }
       const newMessageIds = new Set(newMessages.map((m) => m.id));
-      const newMessageMarker = newMessages.map((msg) => renderer.renderMessage(msg)).join("\n");
 
       let memoryUserProfile: string | undefined;
       let memoryMemories: string | undefined;
@@ -587,13 +589,16 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
       }
 
       const allMessages = buffer.getRecent(groupId);
-      const { text: recentMessagesText, msgMap } = renderer.render(allMessages, new Set(), newMessageIds);
+      const { text: recentMessagesText, msgMap, newMessagesText } = renderer.render(
+        allMessages,
+        newMessageIds,
+        new Set(),
+      );
       const { personaId, personaName, personaHash, personaContent, cachedContent } = await resolvePersonaAndCache(groupId);
       const currentStickerSummary = stickerService?.getSummary() || undefined;
       const systemPrompt = promptBuilder.buildSystemPrompt({
         personaContent,
         includeStaticCore: !cachedContent,
-        recentMessages: recentMessagesText,
         userProfile: memoryUserProfile,
         groupCulture: memoryGroupCulture,
         memories: memoryMemories,
@@ -602,7 +607,10 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
 
       const fiveMinAgo = Date.now() - 5 * 60_000;
       const recentBotCount = buffer.getRecent(groupId).filter((m) => m.isBot && m.timestamp > fiveMinAgo).length;
-      const userPrompt = promptBuilder.buildUserPrompt(newMessageMarker, recentBotCount);
+      const userPrompt = promptBuilder.buildUserPrompt({
+        recentMessages: recentMessagesText,
+        recentBotCount,
+      });
 
       if (memoryUserProfile || memoryMemories || memoryGroupCulture || currentStickerSummary) {
         logger.debug(
@@ -614,7 +622,7 @@ export function createConversationRuntime(deps: RuntimeDeps, state: RuntimeState
         );
       }
 
-      logger.debug(`[${groupId}] 本轮新消息 (${newMessages.length} 条):\n${newMessageMarker}`);
+      logger.debug(`[${groupId}] 本轮新消息 (${newMessages.length} 条):\n${newMessagesText}`);
       logger.debug("调用 LLM...");
       const response = await llm.chat(
         [

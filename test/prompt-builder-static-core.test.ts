@@ -8,7 +8,6 @@ test("PromptBuilder exposes stable static core separately from dynamic prompt bo
   const core = builder.buildStaticCore({ personaContent: "# persona" });
   const full = builder.buildSystemPrompt({
     personaContent: "# persona",
-    recentMessages: "[m1] hi",
     userProfile: "- Echo",
   });
 
@@ -33,10 +32,14 @@ test("PromptBuilder keeps user prompt templated instead of hardcoding prompt tex
   const builder = new PromptBuilder("mio.md");
   const promptManager = getPromptManager();
 
-  const prompt = builder.buildUserPrompt("见上文标记为 [新消息] 的消息：m7、m8", 2);
+  const prompt = builder.buildUserPrompt({
+    recentMessages: "[m1] hi\n--- 以下是你刚划到的新消息 ---\n[m2] hi again",
+    recentBotCount: 2,
+  });
 
-  assert.equal(prompt, promptManager.get("chat_user_simple", {
-    newMessages: "见上文标记为 [新消息] 的消息：m7、m8",
-    recentBotActivity: "（你最近 5 分钟内说了 2 条消息。）\n",
-  }));
+  assert.ok(prompt.includes("[m1] hi"));
+  assert.ok(prompt.includes("[m2] hi again"));
+  assert.ok(prompt.includes("（你最近 5 分钟内说了 2 条消息。）"));
+  assert.ok(prompt.includes(promptManager.getRaw("chat_history_prefix").trimEnd()));
+  assert.ok(prompt.includes(promptManager.getRaw("chat_anchor").trimEnd()));
 });
