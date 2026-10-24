@@ -57,7 +57,7 @@ test("points replies and recalls at earlier [mN] ids when known", () => {
 
 test("marks QQ quotes of the bot's own messages and quotes that could not be matched", () => {
   const parts = renderBatch([
-    message(7, { replyTo: { messageId: "sent1", sender: "澪", preview: "尾巴在下一张", refIdx: "R1", fromBot: true }, segments: [{ type: "text", content: "你能看到吗" }] }),
+    message(7, { replyTo: { messageId: "sent1", sender: "澪", preview: "尾巴在下一张", refIdx: "R1", fromSelf: true }, segments: [{ type: "text", content: "你能看到吗" }] }),
     message(8, { replyTo: { messageId: "", sender: "某人", preview: "打个招呼", refIdx: "R2" }, segments: [{ type: "text", content: "好" }] }),
   ], ctx());
 

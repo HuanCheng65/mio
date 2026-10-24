@@ -95,8 +95,8 @@ export interface ReplyInfo {
   preview: string;
   /** 官方 QQ：被引用消息的引用索引（ref_msg_idx）。平台不给被引用消息的 ID，只能靠它查 */
   refIdx?: string;
-  /** 被引用的是这个号自己发的消息 */
-  fromBot?: boolean;
+  /** 被引用的是澪自己说的话（不含同一个号上的指令回复） */
+  fromSelf?: boolean;
 }
 
 export interface MentionInfo {

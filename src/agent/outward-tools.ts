@@ -19,6 +19,8 @@ export interface OutwardDeps {
   aliases: AliasRegistry;
   outbox: Outbox;
   delivery?: DeliveryOptions;
+  /** 记下哪些平台消息是澪自己说的（区别于同一个号上的指令回复） */
+  markOwn: (groupId: string, messageIds: string[]) => Promise<void>;
 }
 
 const MAX_STICKER_BYTES = 2 * 1024 * 1024;
@@ -94,7 +96,10 @@ export function createSayTool(deps: OutwardDeps): AgentTool {
       if (!session) return "现在没有可以挂靠回复的消息（重启后还没人说过话），这次发不出去";
 
       const { sentParts, messageIds, blocked } = await humanizedSend(session, content, deps.delivery);
-      if (sentParts.length > 0) deps.outbox.recordSent(ctx.groupId, messageIds);
+      if (sentParts.length > 0) {
+        deps.outbox.recordSent(ctx.groupId, messageIds);
+        await deps.markOwn(ctx.groupId, messageIds);
+      }
       if (blocked && sentParts.length === 0) return `没发出去：${blocked}`;
       if (blocked) return `只发出去了前 ${sentParts.length} 段：${blocked}`;
       return "发出去了";
@@ -165,6 +170,7 @@ export function createStickerTool(deps: OutwardDeps & { stickers: StickerFinder 
       const ids = await session.send(h.image(image, stickerMimeType(found.path)));
       recordPassiveReply(session);
       deps.outbox.recordSent(ctx.groupId, ids);
+      await deps.markOwn(ctx.groupId, ids);
       return `发了：${found.description}`;
     },
   };

@@ -44,7 +44,7 @@ async function setup(limits = { minIntervalMs: 0, maxPerHour: 40, maxConsecutive
   await aliases.aliasOf(G, "OPENID_A", "小林");
   const msg: NormalizedMessage = { id: "plat-1", sender: "小林", senderId: "OPENID_A", isBot: false, timestamp: Date.now(), segments: [], mentions: [] };
   await events.append(G, async () => ({ kind: "message", platformMessageId: "plat-1", userId: "OPENID_A", isBot: false, timestamp: msg.timestamp, body: msg }));
-  const deps = { events, aliases, outbox, delivery: instant };
+  const deps = { events, aliases, outbox, delivery: instant, markOwn: async () => {} };
   return { app, outbox, deps, say: createSayTool(deps) };
 }
 

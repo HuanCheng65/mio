@@ -12,6 +12,8 @@ export interface MioSentRefRow {
   groupId: string;
   refIdx: string;
   messageId: string;
+  /** 是澪用 say / sticker 说的；否则是同一个号上的指令回复 */
+  byMio: boolean;
   createdAt: number;
 }
 
@@ -27,6 +29,7 @@ export function extendSentRefTable(ctx: Context): void {
     groupId: "string(63)",
     refIdx: "string(255)",
     messageId: "string(127)",
+    byMio: { type: "boolean", initial: false },
     createdAt: "unsigned(8)",
   }, {
     autoInc: true,
@@ -53,12 +56,20 @@ export function trackSentRefs(ctx: Context, logger: Logger): void {
         logger.warn(`官方 QQ 发送响应里没有消息 ID 或 ext_info.ref_idx，记不下引用索引: ${JSON.stringify(resp)}`);
         return resp;
       }
-      await ctx.database.create("mio.sent_ref", { groupId: `qq:${channelId}`, refIdx, messageId: resp.id, createdAt: Date.now() });
+      await ctx.database.create("mio.sent_ref", { groupId: `qq:${channelId}`, refIdx, messageId: resp.id, byMio: false, createdAt: Date.now() });
       return resp;
     };
   };
   ctx.on("ready", () => ctx.bots.forEach(wrap));
   ctx.on("bot-status-updated", wrap);
+}
+
+/** 澪的发送工具发完后调用：发送接口里记下的那几条标成她自己说的 */
+export function markOwnSends(ctx: Context) {
+  return async (groupId: string, messageIds: string[]): Promise<void> => {
+    if (messageIds.length === 0) return;
+    await ctx.database.set("mio.sent_ref", { groupId, messageId: { $in: messageIds } }, { byMio: true });
+  };
 }
 
 /**
@@ -77,7 +88,11 @@ export async function resolveQQReply(ctx: Context, events: EventStore, groupId: 
   const [sent] = await ctx.database.get("mio.sent_ref", { groupId, refIdx: reply.refIdx });
   if (sent) {
     reply.messageId = sent.messageId;
-    reply.sender = botName;
-    reply.fromBot = true;
+    if (sent.byMio) {
+      reply.sender = botName;
+      reply.fromSelf = true;
+    } else {
+      reply.sender = "号上的另一位（指令回复）";
+    }
   }
 }

@@ -67,7 +67,7 @@ function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext): 
   let reply = "";
   if (msg.replyTo) {
     const target = ctx.seqByMessageId.get(msg.replyTo.messageId);
-    const quoted = msg.replyTo.fromBot ? `${ctx.botName}（你）`
+    const quoted = msg.replyTo.fromSelf ? `${ctx.botName}（你）`
       // 官方 QQ 的引用按索引没对上时，平台不给被引用者是谁
       : msg.replyTo.refIdx && !msg.replyTo.messageId ? "一条没对上的消息"
       : msg.replyTo.sender;

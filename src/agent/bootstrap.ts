@@ -18,6 +18,7 @@ import { Outbox } from "./outbox";
 import { createReactTool, createSayTool, createStickerTool } from "./outward-tools";
 import { Recollection } from "./recollection";
 import { talkShareNote } from "./talk-share";
+import { markOwnSends } from "./qq-refs";
 import type { RecordListener } from "./recorder";
 import { AgentRuntime, loadAgentSystemPrompt, loadSleepPrompt } from "./runtime";
 import { ToolRegistry, type AgentTool } from "./tools";
@@ -68,7 +69,7 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
     },
   });
 
-  const outwardDeps = { events, aliases, outbox };
+  const outwardDeps = { events, aliases, outbox, markOwn: markOwnSends(ctx) };
   const memoryDeps = { ctx, notes, aliases, events };
   const tools: AgentTool[] = [
     createSayTool(outwardDeps),
