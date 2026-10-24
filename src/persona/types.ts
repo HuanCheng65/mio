@@ -55,7 +55,7 @@ export function extendPersonaTables(ctx: Context) {
     personaId: "string(63)",
     updatedAt: "unsigned(8)",
   }, {
-    unique: [["groupId"]],
+    primary: "groupId",
   });
 
   ctx.model.extend("mio.gemini_cache", {
