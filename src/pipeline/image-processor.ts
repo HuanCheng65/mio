@@ -1,5 +1,5 @@
 import { h, Session } from "koishi";
-import { Jimp } from "jimp";
+import sharp from "sharp";
 import { LLMClient, ChatMessage } from "../llm/client";
 import { ModelConfig } from "../llm/provider";
 import { getPromptManager } from "../memory/prompt-manager";
@@ -182,19 +182,16 @@ export class ImageProcessor {
     buffer: Buffer,
     maxPixels: number = 768 * 768,
   ): Promise<string> {
-    const image = await Jimp.read(buffer);
-    const { width, height } = image;
+    const { width, height } = await sharp(buffer).metadata();
+    let image = sharp(buffer).autoOrient();
 
     const currentPixels = width * height;
     if (currentPixels > maxPixels) {
       const scale = Math.sqrt(maxPixels / currentPixels);
-      image.resize({
-        w: Math.round(width * scale),
-        h: Math.round(height * scale),
-      });
+      image = image.resize(Math.round(width * scale), Math.round(height * scale));
     }
 
-    const jpegBuffer = await image.getBuffer("image/jpeg", { quality: 80 });
+    const jpegBuffer = await image.jpeg({ quality: 80 }).toBuffer();
     const base64 = jpegBuffer.toString("base64");
     return `data:image/jpeg;base64,${base64}`;
   }
