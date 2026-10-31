@@ -115,7 +115,9 @@ export class AgentRuntime {
         } else {
           this.wakeAgain.delete(groupId);
           await this.wakeOnce(groupId);
-          if ((await this.log.tokenCount(groupId)) >= this.options.sleep.compactTokens) this.sleepRequested.add(groupId);
+          if ((await this.log.tokenCount(groupId)) >= this.options.sleep.compactTokens || (await this.log.overImageBudget(groupId))) {
+            this.sleepRequested.add(groupId);
+          }
         }
       }
     })().finally(() => this.running.delete(groupId));
@@ -158,6 +160,8 @@ export class AgentRuntime {
     await this.log.startSegment(groupId, preamble, this.options.sleep.tailEvents);
     this.options.onSegmentStart(groupId);
     this.logger.info(`[${groupId}] 睡前整理完成，${tokens} tokens 的 log 收成新的一段`);
+    const released = await this.log.releaseUnusedImages();
+    if (released > 0) this.logger.info(`[${groupId}] 释放了 ${released} 张不再引用的图`);
   }
 
   private async steps(

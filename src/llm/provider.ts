@@ -14,6 +14,17 @@ export interface ReasoningConfig {
   budgetTokens?: number;
 }
 
+export type ImageTransportKind = 'inline' | 'deepseek-files';
+
+/** agent 怎么把图交给模型（见 agent/image-transport.ts） */
+export interface ProviderImageConfig {
+  transport?: ImageTransportKind;
+  /** 发送前缩到的总像素量，填供应商服务端自己的缩放目标 */
+  maxPixels?: number;
+  /** 仅 inline：一段 log 的图片最多占多少请求体（MiB），超过就睡前整理 */
+  inlineBudgetMiB?: number;
+}
+
 export interface ProviderConfig {
   id: string;
   name: string;
@@ -23,6 +34,7 @@ export interface ProviderConfig {
   dialect?: OpenAIDialect;                   // 仅 type=openai 时生效，控制 reasoning/extra 字段翻译
   extraHeaders?: Record<string, string>;     // 仅 type=openai，附加请求头
   extraBody?: Record<string, any>;           // 仅 type=openai，每次请求合入的请求体字段
+  images?: ProviderImageConfig;              // 仅 type=openai，agent 发图方式
 }
 
 export interface ModelConfig {

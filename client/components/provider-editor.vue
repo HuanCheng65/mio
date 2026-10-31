@@ -68,6 +68,27 @@
           placeholder="https://api.deepseek.com"
         />
       </div>
+
+      <div v-if="provider.type === 'openai'" class="form-group">
+        <span class="form-label">agent 发图方式</span>
+        <select :value="provider.images?.transport ?? ''" class="form-input" @change="setTransport">
+          <option value="">未配置（agent 不能用这个供应商）</option>
+          <option value="deepseek-files">DeepSeek Files API（每张图只传一次）</option>
+          <option value="inline">内联 base64（每步随请求上传）</option>
+        </select>
+      </div>
+
+      <div v-if="provider.type === 'openai' && provider.images?.transport" class="form-group">
+        <span class="form-label">缩图目标（总像素）</span>
+        <input v-model.number="provider.images.maxPixels" class="form-input mono" type="number" placeholder="1690000" />
+        <span class="form-hint">填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300 = 1690000</span>
+      </div>
+
+      <div v-if="provider.type === 'openai' && provider.images?.transport === 'inline'" class="form-group">
+        <span class="form-label">内联图片预算（MiB）</span>
+        <input v-model.number="provider.images.inlineBudgetMiB" class="form-input mono" type="number" placeholder="32" />
+        <span class="form-hint">一段 log 的图片超过这个量就睡前整理，要低于供应商的请求体上限</span>
+      </div>
     </div>
 
     <details v-if="provider.type === 'openai'" class="advanced">
@@ -141,7 +162,7 @@
 <script lang="ts" setup>
 import { ref, watch } from "vue";
 import { ChevronRight, Copy, Eye, EyeOff, Plug, Trash2 } from "lucide-vue-next";
-import type { ProviderConfig } from "../../src/llm/provider";
+import type { ImageTransportKind, ProviderConfig } from "../../src/llm/provider";
 import type { ProviderTestResult } from "../../src/console/config-service";
 
 const props = defineProps<{
@@ -207,6 +228,15 @@ function commitExtraHeaders() {
     }
     props.provider.extraHeaders = stringified;
   }
+}
+
+function setTransport(event: Event) {
+  const transport = (event.target as HTMLSelectElement).value as ImageTransportKind | "";
+  if (!transport) {
+    delete (props.provider as any).images;
+    return;
+  }
+  props.provider.images = { ...props.provider.images, transport };
 }
 
 function commitExtraBody() {

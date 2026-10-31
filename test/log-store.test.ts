@@ -4,9 +4,11 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Context } from "koishi";
+import { Jimp } from "jimp";
 import sqlite from "@koishijs/plugin-database-sqlite";
 import { extendEventTable, EventStore } from "../src/agent/event-store";
 import { AliasRegistry, extendAliasTable } from "../src/agent/aliases";
+import { ImageFitter, InlineImageTransport } from "../src/agent/image-transport";
 import { AgentLog, extendLogTable } from "../src/agent/log-store";
 import type { NormalizedMessage } from "../src/perception/types";
 
@@ -22,7 +24,8 @@ async function setup(maxBatchEvents = 80) {
   const mediaDir = mkdtempSync(join(tmpdir(), "mio-media-"));
   const events = new EventStore(app);
   const aliases = new AliasRegistry(app);
-  const log = new AgentLog(app, aliases, { botName: "澪", mediaDir, maxBatchEvents });
+  const images = new InlineImageTransport(new ImageFitter(mediaDir, 64 * 64), 2 ** 20);
+  const log = new AgentLog(app, aliases, { botName: "澪", images, maxBatchEvents });
 
   let n = 0;
   const say = (senderId: string, text: string, extra: Partial<NormalizedMessage> = {}) => {
@@ -79,7 +82,7 @@ test("caps a long backlog and says how much was skipped", async () => {
 
 test("serializes images identically every time so the prefix stays cacheable", async () => {
   const { app, log, say, mediaDir } = await setup();
-  writeFileSync(join(mediaDir, "a.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  writeFileSync(join(mediaDir, "a.png"), await new Jimp({ width: 4, height: 4, color: 0xff0000ff }).getBuffer("image/png"));
   await say("U1", "看", { segments: [{ type: "image", url: "u", description: null, isSticker: false, file: "a.png" }] });
   await log.appendPendingBatch(G);
   await log.appendEntry(G, { role: "assistant", content: [], toolCalls: [{ id: "c1", type: "function", function: { name: "say", arguments: "{}" } }] });

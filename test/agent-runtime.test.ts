@@ -1,12 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { Context } from "koishi";
 import sqlite from "@koishijs/plugin-database-sqlite";
 import { extendEventTable, EventStore } from "../src/agent/event-store";
 import { AliasRegistry, extendAliasTable } from "../src/agent/aliases";
+import type { ImageTransport } from "../src/agent/image-transport";
 import { AgentLog, extendLogTable, type ToolCall } from "../src/agent/log-store";
 import { AgentRuntime, type SleepOptions } from "../src/agent/runtime";
 import { ToolRegistry, type AgentTool } from "../src/agent/tools";
@@ -31,7 +29,7 @@ const reply = (toolCalls: ToolCall[] = [], extra: Partial<AgentStep> = {}): Agen
 
 async function setup(
   script: AgentStep[],
-  options: { maxSteps?: number; tools?: AgentTool[]; onStep?: (n: number) => Promise<void>; sleep?: Partial<SleepOptions> } = {},
+  options: { maxSteps?: number; tools?: AgentTool[]; onStep?: (n: number) => Promise<void>; sleep?: Partial<SleepOptions>; images?: Partial<ImageTransport> } = {},
 ) {
   const app = new Context();
   app.plugin(sqlite, { path: ":memory:" });
@@ -40,7 +38,13 @@ async function setup(
   extendLogTable(app);
   await app.start();
   const events = new EventStore(app);
-  const log = new AgentLog(app, new AliasRegistry(app), { botName: "澪", mediaDir: mkdtempSync(join(tmpdir(), "mio-")), maxBatchEvents: 80 });
+  const images: ImageTransport = {
+    async part(file) { return { type: "file", file_id: file }; },
+    async overBudget() { return false; },
+    async release() { return 0; },
+    ...options.images,
+  };
+  const log = new AgentLog(app, new AliasRegistry(app), { botName: "澪", images, maxBatchEvents: 80 });
 
   const requests: unknown[][] = [];
   const llm = {
@@ -76,9 +80,11 @@ async function setup(
   }, quiet);
 
   let n = 0;
-  const say = (text: string) => {
+  const say = (text: string, image?: string) => {
     const id = `p${++n}`;
-    const msg: NormalizedMessage = { id, sender: "小林", senderId: "U1", isBot: false, timestamp: Date.now(), segments: [{ type: "text", content: text }], mentions: [] };
+    const segments: NormalizedMessage["segments"] = [{ type: "text", content: text }];
+    if (image) segments.push({ type: "image", url: "u", description: null, isSticker: false, file: image });
+    const msg: NormalizedMessage = { id, sender: "小林", senderId: "U1", isBot: false, timestamp: Date.now(), segments, mentions: [] };
     return events.append(G, async () => ({ kind: "message", platformMessageId: id, userId: "U1", isBot: false, timestamp: msg.timestamp, body: msg }));
   };
   return { app, log, runtime, requests, ran, errors, say, segmentStarts };
@@ -235,6 +241,33 @@ test("a log over the size limit sleeps right after the wake", async () => {
   await say("早");
   await runtime.wake(G);
   assert.equal(await log.currentSegment(G), 2);
+  await app.stop();
+});
+
+test("a log whose images exceed the transport's budget sleeps right after the wake", async () => {
+  const seen: string[][] = [];
+  const { app, log, runtime, say } = await setup([reply(), finish()], {
+    images: { async overBudget(files) { seen.push(files); return files.length > 0; } },
+  });
+  await say("看", "a.png");
+  await runtime.wake(G);
+  assert.deepEqual(seen[0], ["a.png"]);
+  assert.equal(await log.currentSegment(G), 2);
+  await app.stop();
+});
+
+test("after a new segment, images no group's current segment uses are released", async () => {
+  const released: Set<string>[] = [];
+  const { app, runtime, say } = await setup([finish()], {
+    sleep: { tailEvents: 1 },
+    images: { async release(keep) { released.push(keep); return 0; } },
+  });
+  await say("旧图", "old.png");
+  await say("新图", "new.png");
+  await app.database.create("mio.log_entry", { groupId: "qq:H", segment: 3, role: "user", content: [{ type: "image", file: "other.png" }], toolCalls: null, toolCallId: null, reasoning: null, lastSeq: 0, tokens: 0, createdAt: 0 });
+  await app.database.create("mio.log_entry", { groupId: "qq:H", segment: 2, role: "user", content: [{ type: "image", file: "stale.png" }], toolCalls: null, toolCallId: null, reasoning: null, lastSeq: 0, tokens: 0, createdAt: 0 });
+  await runtime.requestSleep(G);
+  assert.deepEqual([...released[0]].sort(), ["new.png", "other.png"], "the tail carried into the new segment and other groups' current segments stay");
   await app.stop();
 });
 

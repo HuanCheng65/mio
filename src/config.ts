@@ -92,6 +92,12 @@ export const Config: Schema<Config> = Schema.object({
         .description("OpenAI 兼容方言（控制 reasoning 字段翻译；type=gemini 时忽略）"),
       extraHeaders: Schema.dict(Schema.string()).description("附加请求头（type=openai）"),
       extraBody: Schema.dict(Schema.any()).description("附加请求体字段（type=openai，每次请求合入）"),
+      images: Schema.object({
+        transport: Schema.union(["inline", "deepseek-files"] as const)
+          .description("inline: base64 内联，每步随请求上传；deepseek-files: 经 DeepSeek Files API 上传一次，之后只引用 file_id"),
+        maxPixels: Schema.number().description("发送前缩到的总像素量（填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300）"),
+        inlineBudgetMiB: Schema.number().description("仅 inline：一段 log 的图片最多占多少请求体（MiB），超过就睡前整理"),
+      }).description("agent 发图方式（type=openai）"),
     }),
   )
     .default([
@@ -104,6 +110,7 @@ export const Config: Schema<Config> = Schema.object({
         dialect: "deepseek",
         extraHeaders: {},
         extraBody: {},
+        images: { transport: "deepseek-files", maxPixels: 1300 * 1300, inlineBudgetMiB: undefined },
       },
     ])
     .description("LLM 供应商配置"),

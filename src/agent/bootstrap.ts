@@ -9,6 +9,7 @@ import type { GroupRegistry } from "../runtime/groups";
 import { SearchService } from "../search/router";
 import type { AliasRegistry } from "./aliases";
 import type { EventStore } from "./event-store";
+import { createImageTransport } from "./image-transport";
 import { createFindSourceTool, createSearchTool } from "./inward-tools";
 import { AgentLLM } from "./llm";
 import { AgentLog } from "./log-store";
@@ -51,6 +52,11 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   }
 
   const providers = new ProviderManager(config.providers);
+  const images = createImageTransport(ctx, openaiProvider(agent.model.providerId)!, providers.getOpenAIProvider(agent.model.providerId)!, mediaDir);
+  if (typeof images === "string") {
+    logger.warn(images);
+    return false;
+  }
   const embedding = new EmbeddingService(providers, config.memory.embedding);
   ctx.on("ready", async () => {
     await verifyEmbeddingModel(ctx, embedding, NOTE_EMBEDDING_KEY, ["mio.note"]);
@@ -63,7 +69,7 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   const groupNames = new GroupNames(ctx, logger);
   const log = new AgentLog(ctx, aliases, {
     botName: config.botName,
-    mediaDir,
+    images,
     maxBatchEvents: agent.maxBatchEvents,
     groupName: (groupId) => groupNames.get(groupId),
     annotate: async (groupId, batch) => {

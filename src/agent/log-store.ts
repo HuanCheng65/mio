@@ -1,9 +1,8 @@
 import { $, Context } from "koishi";
-import { readFile } from "node:fs/promises";
-import { extname, join } from "node:path";
 import type { NormalizedMessage } from "../perception/types";
 import type { AliasRegistry } from "./aliases";
 import type { MioEventRow } from "./event-store";
+import type { ImagePart, ImageTransport } from "./image-transport";
 import { renderBatch, type LogPart } from "./log-format";
 import { estimateTokens, IMAGE_TOKENS } from "./tokens";
 
@@ -62,7 +61,7 @@ export function extendLogTable(ctx: Context): void {
 }
 
 export type ChatMessage =
-  | { role: "user"; content: string | ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } })[] }
+  | { role: "user"; content: string | ({ type: "text"; text: string } | ImagePart)[] }
   | { role: "assistant"; content: string | null; tool_calls?: ToolCall[]; reasoning_content?: string }
   | { role: "tool"; tool_call_id: string; content: string };
 
@@ -74,10 +73,12 @@ export interface NewLogEntry {
   reasoning?: string | null;
 }
 
-const MIME: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
-
 function partsTokens(parts: LogPart[]): number {
   return parts.reduce((sum, p) => sum + (p.type === "text" ? estimateTokens(p.text) : IMAGE_TOKENS), 0);
+}
+
+function imageFiles(entries: Pick<MioLogEntryRow, "content">[]): string[] {
+  return entries.flatMap((e) => e.content.flatMap((p) => (p.type === "image" ? [p.file] : [])));
 }
 
 export class AgentLog {
@@ -88,7 +89,7 @@ export class AgentLog {
     private aliases: AliasRegistry,
     private options: {
       botName: string;
-      mediaDir: string;
+      images: ImageTransport;
       maxBatchEvents: number;
       /** 给每批附上旁注（记忆的浮现）；在别名分配之后调用 */
       annotate?: (groupId: string, events: MioEventRow[]) => Promise<string[]>;
@@ -239,11 +240,24 @@ export class AgentLog {
     return sum ?? 0;
   }
 
-  private async imageUrl(file: string): Promise<string> {
-    const mime = MIME[extname(file)];
-    if (!mime) throw new Error(`unsupported media type for ${file}`);
-    const data = await readFile(join(this.options.mediaDir, file));
-    return `data:${mime};base64,${data.toString("base64")}`;
+  /** 当前段的图片是否超出一次请求能带的量 */
+  async overImageBudget(groupId: string): Promise<boolean> {
+    return this.options.images.overBudget(imageFiles(await this.entries(groupId)));
+  }
+
+  /** 开新段之后：释放所有群当前段都不再引用的图（同一张图可能出现在好几个群里），返回释放了几张 */
+  async releaseUnusedImages(): Promise<number> {
+    // 这之后才准备好的图可能属于正在进行的唤醒，还没出现在下面读到的 log 里，不能动
+    const before = Date.now();
+    const current = await this.ctx.database.select("mio.log_entry")
+      .groupBy("groupId", { segment: (row) => $.max(row.segment) })
+      .execute();
+    const keep = new Set<string>();
+    for (const { groupId, segment } of current) {
+      const entries = await this.ctx.database.get("mio.log_entry", { groupId, segment }, ["content"]);
+      for (const file of imageFiles(entries)) keep.add(file);
+    }
+    return this.options.images.release(keep, before);
   }
 
   /** 转成 OpenAI 兼容的消息；文本-only 的 user 条目用字符串，保证同一条目每次序列化结果相同 */
@@ -266,7 +280,7 @@ export class AgentLog {
       } else {
         const parts = [];
         for (const p of e.content) {
-          parts.push(p.type === "text" ? { type: "text" as const, text: p.text } : { type: "image_url" as const, image_url: { url: await this.imageUrl(p.file) } });
+          parts.push(p.type === "text" ? { type: "text" as const, text: p.text } : await this.options.images.part(p.file));
         }
         messages.push({ role: "user", content: parts });
       }
