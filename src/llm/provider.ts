@@ -1,5 +1,5 @@
 import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk';
-import { fetch as undiciFetch, ProxyAgent } from 'undici';
+import { ProxyAgent } from 'undici';
 import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
 
@@ -16,7 +16,7 @@ export interface ReasoningConfig {
   budgetTokens?: number;
 }
 
-export type ImageTransportKind = 'inline' | 'deepseek-files';
+export type ImageTransportKind = 'inline' | 'deepseek-files' | 'anthropic-files';
 
 /** agent 怎么把图交给模型（见 agent/image-transport.ts） */
 export interface ProviderImageConfig {
@@ -50,14 +50,13 @@ export interface ModelConfig {
 }
 
 /**
- * Anthropic 客户端；配了 proxyUrl 就经代理访问。代理用 undici 自己的 fetch 配它自己的 ProxyAgent：
- * Node 内置 fetch 捆绑的 undici 版本不同，混用 dispatcher 不可靠。
+ * Anthropic 客户端；配了 proxyUrl 就经代理访问。用 Node 内置的 fetch，只把 undici 的 ProxyAgent 当 dispatcher 传进去：
+ * 换成 undici 自己的 fetch 的话，SDK 上传文件时拼的是 Node 全局的 FormData，undici 的 fetch 不认，Files API 传不了图。
  */
 export function createAnthropicClient(config: ProviderConfig): Anthropic {
   if (!config.proxyUrl) return new Anthropic({ apiKey: config.apiKey });
   return new Anthropic({
     apiKey: config.apiKey,
-    fetch: undiciFetch as unknown as typeof fetch,
     fetchOptions: { dispatcher: new ProxyAgent(config.proxyUrl) } as unknown as ClientOptions['fetchOptions'],
   });
 }

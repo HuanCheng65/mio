@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Context } from "koishi";
 import sqlite from "@koishijs/plugin-database-sqlite";
 import { Jimp } from "jimp";
-import { DeepSeekFilesTransport, extendUploadedImageTable, ImageFitter, InlineImageTransport, type FileUploader } from "../src/agent/image-transport";
+import { FilesApiTransport, extendUploadedImageTable, ImageFitter, InlineImageTransport, type FileUploader } from "../src/agent/image-transport";
 
 async function media(images: Record<string, { width: number; height: number; mime?: "image/png" | "image/jpeg" }>) {
   const dir = mkdtempSync(join(tmpdir(), "mio-media-"));
@@ -80,12 +80,12 @@ test("each image is uploaded once and then referenced by file_id, also after a r
   const { uploader, uploads } = fakeUploader();
   const fitter = new ImageFitter(dir, 64 * 64);
 
-  const transport = new DeepSeekFilesTransport(app, "ds", uploader, fitter);
+  const transport = new FilesApiTransport(app, "ds", uploader, fitter);
   const [first, second] = await Promise.all([transport.part("a.png"), transport.part("a.png")]);
   assert.deepEqual(first, { type: "file", file_id: "file-1" });
   assert.deepEqual(second, first);
 
-  const restarted = new DeepSeekFilesTransport(app, "ds", uploader, fitter);
+  const restarted = new FilesApiTransport(app, "ds", uploader, fitter);
   assert.deepEqual(await restarted.part("a.png"), first);
   assert.deepEqual(uploads, ["a.png"]);
   assert.equal(await transport.overBudget(), false);
@@ -96,7 +96,7 @@ test("release deletes this provider's uploads that nothing keeps and that predat
   const dir = await media({ "keep.png": { width: 8, height: 8 }, "old.png": { width: 8, height: 8 }, "fresh.png": { width: 8, height: 8 } });
   const app = await database();
   const { uploader, removed } = fakeUploader();
-  const transport = new DeepSeekFilesTransport(app, "ds", uploader, new ImageFitter(dir, 64 * 64));
+  const transport = new FilesApiTransport(app, "ds", uploader, new ImageFitter(dir, 64 * 64));
   await transport.part("keep.png");
   await transport.part("old.png");
   await app.database.create("mio.uploaded_image", { providerId: "other", file: "old.png", fileId: "other-1", createdAt: 0 });

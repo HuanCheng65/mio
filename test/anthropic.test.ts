@@ -107,10 +107,14 @@ test("assistant entries from an OpenAI-compatible model are rebuilt; empty turns
 test("requests that Anthropic cannot take fail loudly", () => {
   assert.throws(() => buildAnthropicRequest([system, { role: "user", content: "早" }, { role: "assistant", content: "嗯" }], tools, model), /最后一条必须是 user/);
   assert.throws(() => buildAnthropicRequest([{ role: "user", content: "早" }], tools, model), /第一条消息必须是 system/);
-  assert.throws(
-    () => buildAnthropicRequest([system, { role: "user", content: [{ type: "file", file_id: "file-1" }] }], tools, model),
-    /不能引用 DeepSeek 的 file_id/,
-  );
+});
+
+test("images uploaded through the Files API are referenced by file_id", () => {
+  const request = buildAnthropicRequest([system, { role: "user", content: [{ type: "text", text: "看" }, { type: "file", file_id: "file_011" }] }], tools, model);
+  assert.deepEqual(withoutCacheControl(request.messages), [
+    { role: "user", content: [{ type: "text", text: "看" }, { type: "image", source: { type: "file", file_id: "file_011" } }] },
+  ]);
+  validateAnthropicModel({ ...provider, images: { transport: "anthropic-files", maxPixels: 1 } }, model);
 });
 
 test("reasoning settings map onto thinking and effort", () => {
@@ -153,7 +157,7 @@ test("model settings Anthropic rejects are caught at startup", () => {
   assert.throws(() => validateAnthropicModel(provider, { ...model, cacheTtlMinutes: 5 }), /cacheTtlMinutes 只能是 60/);
   assert.throws(() => validateAnthropicModel(provider, { ...model, temperature: 0.7 }), /不能设 temperature/);
   assert.throws(() => validateAnthropicModel(provider, { ...model, extraBody: { top_k: 5 } }), /不支持 extraBody/);
-  assert.throws(() => validateAnthropicModel({ ...provider, images: { transport: "deepseek-files", maxPixels: 1 } }, model), /只能用 inline/);
+  assert.throws(() => validateAnthropicModel({ ...provider, images: { transport: "deepseek-files", maxPixels: 1 } }, model), /只能用 inline 或 anthropic-files/);
 });
 
 const response = (content: unknown[], extra: Record<string, unknown> = {}) => ({

@@ -87,6 +87,7 @@
         <select :value="provider.images?.transport ?? ''" class="form-input" @change="setTransport">
           <option value="">未配置（agent 不能用这个供应商）</option>
           <option v-if="provider.type === 'openai'" value="deepseek-files">DeepSeek Files API（每张图只传一次）</option>
+          <option v-if="provider.type === 'anthropic'" value="anthropic-files">Anthropic Files API（每张图只传一次）</option>
           <option value="inline">内联 base64（每步随请求上传）</option>
         </select>
       </div>
@@ -94,13 +95,13 @@
       <div v-if="provider.type !== 'gemini' && provider.images?.transport" class="form-group">
         <span class="form-label">缩图目标（总像素）</span>
         <input v-model.number="provider.images.maxPixels" class="form-input mono" type="number" placeholder="1690000" />
-        <span class="form-hint">填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300 = 1690000，Claude 约 1150000</span>
+        <span class="form-hint">填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300 = 1690000；Claude 4.7 及以后最多约 3750000（长边 2576），填小些更省</span>
       </div>
 
       <div v-if="provider.type !== 'gemini' && provider.images?.transport === 'inline'" class="form-group">
         <span class="form-label">内联图片预算（MiB）</span>
         <input v-model.number="provider.images.inlineBudgetMiB" class="form-input mono" type="number" placeholder="32" />
-        <span class="form-hint">一段 log 的图片超过这个量就睡前整理，要低于供应商的请求体上限（Claude 是 32 MB，base64 再大三分之一，填 16 左右）</span>
+        <span class="form-hint">一段 log 的图片超过这个量就睡前整理，要低于供应商的请求体上限（Claude 是 128 MB，base64 再大三分之一）</span>
       </div>
     </div>
 

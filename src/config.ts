@@ -95,11 +95,11 @@ export const Config: Schema<Config> = Schema.object({
       extraHeaders: Schema.dict(Schema.string()).description("附加请求头（type=openai）"),
       extraBody: Schema.dict(Schema.any()).description("附加请求体字段（type=openai，每次请求合入）"),
       images: Schema.object({
-        transport: Schema.union(["inline", "deepseek-files"] as const)
-          .description("inline: base64 内联，每步随请求上传；deepseek-files: 经 DeepSeek Files API 上传一次，之后只引用 file_id"),
+        transport: Schema.union(["inline", "deepseek-files", "anthropic-files"] as const)
+          .description("inline: base64 内联，每步随请求上传；deepseek-files / anthropic-files: 经供应商的 Files API 上传一次，之后只引用 file_id"),
         maxPixels: Schema.number().description("发送前缩到的总像素量（填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300）"),
         inlineBudgetMiB: Schema.number().description("仅 inline：一段 log 的图片最多占多少请求体（MiB），超过就睡前整理"),
-      }).description("agent 发图方式（type=openai / anthropic；anthropic 只支持 inline）"),
+      }).description("agent 发图方式（type=openai 用 inline / deepseek-files；type=anthropic 用 inline / anthropic-files）"),
       proxyUrl: Schema.string().description("HTTP 代理地址（仅 type=anthropic；服务器直连 Anthropic 会被按地区拒绝），如 http://127.0.0.1:7890"),
     }),
   )

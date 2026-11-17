@@ -60,7 +60,10 @@ export function validateAnthropicModel(provider: ProviderConfig, model: AgentMod
   if (Object.keys(provider.extraBody ?? {}).length > 0 || Object.keys(model.extraBody ?? {}).length > 0) {
     throw new Error(`${model.modelName}: Anthropic 供应商不支持 extraBody`);
   }
-  if (provider.images?.transport !== "inline") throw new Error(`供应商 ${provider.id}: Anthropic 只能用 inline 发图（images.transport=inline）`);
+  const transport = provider.images?.transport;
+  if (transport !== "inline" && transport !== "anthropic-files") {
+    throw new Error(`供应商 ${provider.id}: Anthropic 只能用 inline 或 anthropic-files 发图（现在是 ${transport}）`);
+  }
   anthropicThinking(model);
 }
 
@@ -68,7 +71,8 @@ function userBlocks(content: Extract<ChatMessage, { role: "user" }>["content"]):
   if (typeof content === "string") return [{ type: "text", text: content }];
   return content.map((part): BetaContentBlockParam => {
     if (part.type === "text") return { type: "text", text: part.text };
-    if (part.type === "file") throw new Error(`Anthropic 不能引用 DeepSeek 的 file_id（${part.file_id}），供应商要用 inline 发图`);
+    // anthropic-files 发图给出的 file_id；part 是请求时按当前供应商生成的，不会混进别家的 id
+    if (part.type === "file") return { type: "image", source: { type: "file", file_id: part.file_id } };
     // inline 发图给出的是我们自己拼的 data URL
     const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/.exec(part.image_url.url);
     if (!match) throw new Error(`无法转成 Anthropic 图片块的 image_url: ${part.image_url.url.slice(0, 40)}`);

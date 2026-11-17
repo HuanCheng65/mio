@@ -58,7 +58,7 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   const transports = new Map<string, ImageTransport>();
   for (const { label, provider } of modelUses) {
     if (transports.has(provider.id)) continue;
-    const transport = createImageTransport(ctx, provider, providers.getOpenAIProvider(provider.id), mediaDir);
+    const transport = createImageTransport(ctx, provider, { openai: providers.getOpenAIProvider(provider.id), anthropic: providers.getAnthropicProvider(provider.id) }, mediaDir);
     if (typeof transport === "string") {
       logger.warn(`${label}：${transport}`);
       return false;

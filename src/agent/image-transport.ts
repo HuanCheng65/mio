@@ -2,11 +2,15 @@ import { existsSync } from "node:fs";
 import { link, mkdir, readFile, rename, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { Context } from "koishi";
+import Anthropic, { toFile as toAnthropicFile } from "@anthropic-ai/sdk";
 import OpenAI, { toFile } from "openai";
 import sharp from "sharp";
 import type { ProviderConfig } from "../llm/provider";
 
-/** 请求里的一张图：内联 data URL，或 DeepSeek Files API 的引用（DeepSeek 的写法，file_id 和 type 平级） */
+/**
+ * 请求里的一张图：内联 data URL，或 Files API 的引用（DeepSeek 的写法，file_id 和 type 平级；
+ * 发给 Anthropic 时由 anthropic.ts 换成 image 块的 file 来源）
+ */
 export type ImagePart = { type: "image_url"; image_url: { url: string } } | { type: "file"; file_id: string };
 
 /**
@@ -108,6 +112,16 @@ export function openAIUploader(client: OpenAI): FileUploader {
   };
 }
 
+export function anthropicUploader(client: Anthropic): FileUploader {
+  return {
+    // 显式带上 MIME：Anthropic 按文件类型决定它能不能当 image 块引用
+    upload: async (data, name) => (await client.files.upload({ file: await toAnthropicFile(data, name, { type: mimeOf(name) }) })).id,
+    remove: async (fileId) => {
+      await client.files.delete(fileId);
+    },
+  };
+}
+
 export interface UploadedImageRow {
   providerId: string;
   file: string;
@@ -133,10 +147,11 @@ export function extendUploadedImageTable(ctx: Context): void {
 }
 
 /**
- * 每张图经 Files API 上传一次，请求里只带 file_id。不设有效期（DeepSeek 默认永久保存），
- * 不再被任何群当前段引用的图在开新段后删掉，免得撞上账号的文件数上限。
+ * 每张图经供应商的 Files API 上传一次，请求里只带 file_id，请求体不再随图片数量增长。
+ * 不设有效期（DeepSeek 和 Anthropic 默认都永久保存），不再被任何群当前段引用的图在开新段后删掉，
+ * 免得撞上账号的文件数或存储上限。
  */
-export class DeepSeekFilesTransport implements ImageTransport {
+export class FilesApiTransport implements ImageTransport {
   private known = new Map<string, string>();
   private pending = new Map<string, Promise<string>>();
 
@@ -189,11 +204,14 @@ export class DeepSeekFilesTransport implements ImageTransport {
   }
 }
 
-/**
- * 按供应商配置选发图方式；配置不全时返回原因。
- * openaiClient 只有 OpenAI 兼容的供应商才有；Anthropic 只接受 base64 内联的图，所以只能用 inline。
- */
-export function createImageTransport(ctx: Context, provider: ProviderConfig, openaiClient: OpenAI | undefined, mediaDir: string): ImageTransport | string {
+/** 供应商对应的客户端：OpenAI 兼容的供应商只有 openai，anthropic 的只有 anthropic */
+export interface ProviderClients {
+  openai?: OpenAI;
+  anthropic?: Anthropic;
+}
+
+/** 按供应商配置选发图方式；配置不全或和供应商类型不配时返回原因 */
+export function createImageTransport(ctx: Context, provider: ProviderConfig, clients: ProviderClients, mediaDir: string): ImageTransport | string {
   const images = provider.images;
   if (!images?.transport || !images.maxPixels) {
     return `agent 模型的供应商 ${provider.id} 没有配置发图方式（images.transport / images.maxPixels），新运行时未启动`;
@@ -201,8 +219,11 @@ export function createImageTransport(ctx: Context, provider: ProviderConfig, ope
   const fitter = new ImageFitter(mediaDir, images.maxPixels);
   switch (images.transport) {
     case "deepseek-files":
-      if (!openaiClient) return `供应商 ${provider.id} 不是 OpenAI 兼容的，不能用 deepseek-files 发图（anthropic 请用 inline），新运行时未启动`;
-      return new DeepSeekFilesTransport(ctx, provider.id, openAIUploader(openaiClient), fitter);
+      if (!clients.openai) return `供应商 ${provider.id} 不是 OpenAI 兼容的，不能用 deepseek-files 发图，新运行时未启动`;
+      return new FilesApiTransport(ctx, provider.id, openAIUploader(clients.openai), fitter);
+    case "anthropic-files":
+      if (!clients.anthropic) return `供应商 ${provider.id} 不是 anthropic，不能用 anthropic-files 发图，新运行时未启动`;
+      return new FilesApiTransport(ctx, provider.id, anthropicUploader(clients.anthropic), fitter);
     case "inline":
       if (!images.inlineBudgetMiB) return `供应商 ${provider.id} 用内联发图，需要配置 images.inlineBudgetMiB，新运行时未启动`;
       return new InlineImageTransport(fitter, images.inlineBudgetMiB * 2 ** 20);
