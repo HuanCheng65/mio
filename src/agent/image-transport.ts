@@ -189,8 +189,11 @@ export class DeepSeekFilesTransport implements ImageTransport {
   }
 }
 
-/** 按供应商配置选发图方式；配置不全时返回原因 */
-export function createImageTransport(ctx: Context, provider: ProviderConfig, client: OpenAI, mediaDir: string): ImageTransport | string {
+/**
+ * 按供应商配置选发图方式；配置不全时返回原因。
+ * openaiClient 只有 OpenAI 兼容的供应商才有；Anthropic 只接受 base64 内联的图，所以只能用 inline。
+ */
+export function createImageTransport(ctx: Context, provider: ProviderConfig, openaiClient: OpenAI | undefined, mediaDir: string): ImageTransport | string {
   const images = provider.images;
   if (!images?.transport || !images.maxPixels) {
     return `agent 模型的供应商 ${provider.id} 没有配置发图方式（images.transport / images.maxPixels），新运行时未启动`;
@@ -198,7 +201,8 @@ export function createImageTransport(ctx: Context, provider: ProviderConfig, cli
   const fitter = new ImageFitter(mediaDir, images.maxPixels);
   switch (images.transport) {
     case "deepseek-files":
-      return new DeepSeekFilesTransport(ctx, provider.id, openAIUploader(client), fitter);
+      if (!openaiClient) return `供应商 ${provider.id} 不是 OpenAI 兼容的，不能用 deepseek-files 发图（anthropic 请用 inline），新运行时未启动`;
+      return new DeepSeekFilesTransport(ctx, provider.id, openAIUploader(openaiClient), fitter);
     case "inline":
       if (!images.inlineBudgetMiB) return `供应商 ${provider.id} 用内联发图，需要配置 images.inlineBudgetMiB，新运行时未启动`;
       return new InlineImageTransport(fitter, images.inlineBudgetMiB * 2 ** 20);

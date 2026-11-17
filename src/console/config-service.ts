@@ -1,3 +1,4 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { Context } from "koishi";
 import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
@@ -48,6 +49,8 @@ export class ConfigService {
         const ai = new GoogleGenAI({ apiKey: provider.apiKey });
         const pager: any = await ai.models.list();
         await pager[Symbol.asyncIterator]().next();
+      } else if (provider.type === "anthropic") {
+        await new Anthropic({ apiKey: provider.apiKey }).models.list();
       } else {
         const client = new OpenAI({
           apiKey: provider.apiKey,
@@ -79,6 +82,12 @@ export class ConfigService {
         if (name) names.push(name);
         if (names.length >= 200) break;
       }
+      return names.sort();
+    }
+
+    if (provider.type === "anthropic") {
+      const names: string[] = [];
+      for await (const model of new Anthropic({ apiKey: provider.apiKey }).models.list()) names.push(model.id);
       return names.sort();
     }
 

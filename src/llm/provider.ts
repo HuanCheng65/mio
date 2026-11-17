@@ -1,7 +1,8 @@
+import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
 
-export type ProviderType = 'openai' | 'gemini';
+export type ProviderType = 'openai' | 'gemini' | 'anthropic';
 
 export type OpenAIDialect = 'openai' | 'deepseek' | 'qwen' | 'openrouter' | 'siliconflow' | 'custom';
 
@@ -34,7 +35,7 @@ export interface ProviderConfig {
   dialect?: OpenAIDialect;                   // 仅 type=openai 时生效，控制 reasoning/extra 字段翻译
   extraHeaders?: Record<string, string>;     // 仅 type=openai，附加请求头
   extraBody?: Record<string, any>;           // 仅 type=openai，每次请求合入的请求体字段
-  images?: ProviderImageConfig;              // 仅 type=openai，agent 发图方式
+  images?: ProviderImageConfig;              // type=openai / anthropic，agent 发图方式
 }
 
 export interface ModelConfig {
@@ -49,6 +50,7 @@ export interface ModelConfig {
 export class ProviderManager {
   private openaiProviders: Map<string, OpenAI> = new Map();
   private geminiProviders: Map<string, GoogleGenAI> = new Map();
+  private anthropicProviders: Map<string, Anthropic> = new Map();
   private configs: Map<string, ProviderConfig> = new Map();
 
   constructor(providerConfigs: ProviderConfig[]) {
@@ -65,6 +67,9 @@ export class ProviderManager {
         config.id,
         new GoogleGenAI({ apiKey: config.apiKey })
       );
+    } else if (config.type === 'anthropic') {
+      // 原生 Anthropic Messages API（目前只有 agent 用）
+      this.anthropicProviders.set(config.id, new Anthropic({ apiKey: config.apiKey }));
     } else {
       // OpenAI-compatible
       this.openaiProviders.set(
@@ -84,6 +89,10 @@ export class ProviderManager {
 
   getGeminiProvider(providerId: string): GoogleGenAI | undefined {
     return this.geminiProviders.get(providerId);
+  }
+
+  getAnthropicProvider(providerId: string): Anthropic | undefined {
+    return this.anthropicProviders.get(providerId);
   }
 
   getProviderConfig(providerId: string): ProviderConfig | undefined {

@@ -9,10 +9,11 @@ import type { GroupRegistry } from "../runtime/groups";
 import { SearchService } from "../search/router";
 import type { AliasRegistry } from "./aliases";
 import type { EventStore } from "./event-store";
-import { createImageTransport } from "./image-transport";
+import { createImageTransport, type ImageTransport } from "./image-transport";
 import { createFindSourceTool, createSearchTool } from "./inward-tools";
 import { AgentLLM } from "./llm";
-import { AgentLog } from "./log-store";
+import { AgentLog, type GroupImages } from "./log-store";
+import { agentModelFor, checkAgentModels } from "./models";
 import { createPersonTool, createRecallTool, createRememberTool, createStickerFinder } from "./memory-tools";
 import { NOTE_EMBEDDING_KEY, NoteStore } from "./notes";
 import { Outbox } from "./outbox";
@@ -23,7 +24,7 @@ import { GroupNames } from "./group-names";
 import { markOwnSends } from "./qq-refs";
 import { passiveReplyBlocker, recordPassiveReply } from "../platform/qq";
 import type { RecordListener } from "./recorder";
-import { AgentRuntime, loadAgentSystemPrompt, loadSleepPrompt } from "./runtime";
+import { AgentRuntime, loadAgentSystemPrompt, loadReminder, loadSleepPrompt } from "./runtime";
 import { ToolRegistry, type AgentTool } from "./tools";
 
 type Logger = ReturnType<Context["logger"]>;
@@ -41,22 +42,34 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   const { groups, events, aliases, mediaDir, listeners } = shared;
   const agent = config.agent;
 
-  const openaiProvider = (id: string) => config.providers.find((p) => p.id === id && p.type === "openai" && p.apiKey);
-  if (!openaiProvider(agent.model.providerId)) {
-    logger.warn(`agent 模型的供应商 ${agent.model.providerId} 不存在、不是 OpenAI 兼容的或没有 API Key，新运行时未启动`);
+  const modelUses = checkAgentModels(agent, config.providers);
+  if (typeof modelUses === "string") {
+    logger.warn(`${modelUses}，新运行时未启动`);
     return false;
   }
+  const openaiProvider = (id: string) => config.providers.find((p) => p.id === id && p.type === "openai" && p.apiKey);
   if (!openaiProvider(config.memory.embedding.providerId)) {
     logger.warn(`embedding 的供应商 ${config.memory.embedding.providerId} 不存在、不是 OpenAI 兼容的或没有 API Key，新运行时未启动`);
     return false;
   }
 
   const providers = new ProviderManager(config.providers);
-  const images = createImageTransport(ctx, openaiProvider(agent.model.providerId)!, providers.getOpenAIProvider(agent.model.providerId)!, mediaDir);
-  if (typeof images === "string") {
-    logger.warn(images);
-    return false;
+  // 发图方式跟着供应商走，每个供应商只建一个（DeepSeek 上传和缩图的去重都在实例里）
+  const transports = new Map<string, ImageTransport>();
+  for (const { label, provider } of modelUses) {
+    if (transports.has(provider.id)) continue;
+    const transport = createImageTransport(ctx, provider, providers.getOpenAIProvider(provider.id), mediaDir);
+    if (typeof transport === "string") {
+      logger.warn(`${label}：${transport}`);
+      return false;
+    }
+    transports.set(provider.id, transport);
   }
+  const modelFor = agentModelFor(agent);
+  const images: GroupImages = {
+    of: (groupId) => transports.get(modelFor(groupId).providerId)!,
+    all: [...transports.values()],
+  };
   const embedding = new EmbeddingService(providers, config.memory.embedding);
   ctx.on("ready", async () => {
     await verifyEmbeddingModel(ctx, embedding, NOTE_EMBEDDING_KEY, ["mio.note"]);
@@ -106,15 +119,15 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   const registry = new ToolRegistry(tools, (call, error) => logger.error(`agent 工具 ${call.function.name} 出错:`, error));
 
   const runtime = new AgentRuntime(log, new AgentLLM(providers), registry, {
-    model: agent.model,
+    modelFor,
     maxSteps: agent.maxSteps,
     systemPrompt: loadAgentSystemPrompt(agent.personaFile),
+    reminder: loadReminder(),
     isShadow: (groupId) => groups.isAgentShadow(groupId),
     sleep: {
       prompt: loadSleepPrompt(),
       maxSteps: agent.sleep.maxSteps,
       compactTokens: agent.sleep.compactTokens,
-      idleMs: agent.sleep.idleHours * 3600_000,
       minTokens: agent.sleep.minTokens,
       tailEvents: agent.sleep.tailEvents,
     },
@@ -127,7 +140,6 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
     if (!groups.runsAgent(groupId)) return;
     const msg = event.body as NormalizedMessage;
     outbox.noteUserMessage(groupId, session);
-    runtime.noteActivity(groupId);
 
     const text = msg.segments.map((s) => (s.type === "text" ? s.content : "")).join("");
     const engaged = msg.mentions.some((m) => m.isBot)
@@ -182,5 +194,8 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   });
 
   logger.info(`新运行时已就绪 (${agent.model.providerId}/${agent.model.modelName}，${tools.length} 个工具)`);
+  for (const [groupId, model] of Object.entries(agent.groupModels)) {
+    logger.info(`群 ${groupId} 的 agent 模型: ${model.providerId}/${model.modelName}`);
+  }
   return true;
 }

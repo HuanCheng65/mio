@@ -9,6 +9,7 @@ import { AgentLog, extendLogTable, type ToolCall } from "../src/agent/log-store"
 import { AgentRuntime, type SleepOptions } from "../src/agent/runtime";
 import { ToolRegistry, type AgentTool } from "../src/agent/tools";
 import type { AgentStep } from "../src/agent/llm";
+import type { AgentModelConfig } from "../src/agent/models";
 import type { NormalizedMessage } from "../src/perception/types";
 
 const G = "qq:G";
@@ -23,13 +24,21 @@ const reply = (toolCalls: ToolCall[] = [], extra: Partial<AgentStep> = {}): Agen
   content: "",
   reasoning: null,
   toolCalls,
-  usage: { promptTokens: 0, completionTokens: 0, cachedTokens: 0 },
+  anthropicContent: null,
+  usage: { promptTokens: 0, completionTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 },
   ...extra,
 });
 
 async function setup(
   script: AgentStep[],
-  options: { maxSteps?: number; tools?: AgentTool[]; onStep?: (n: number) => Promise<void>; sleep?: Partial<SleepOptions>; images?: Partial<ImageTransport> } = {},
+  options: {
+    maxSteps?: number;
+    tools?: AgentTool[];
+    onStep?: (n: number) => Promise<void>;
+    sleep?: Partial<SleepOptions>;
+    images?: Partial<ImageTransport>;
+    modelFor?: (groupId: string) => AgentModelConfig;
+  } = {},
 ) {
   const app = new Context();
   app.plugin(sqlite, { path: ":memory:" });
@@ -44,12 +53,14 @@ async function setup(
     async release() { return 0; },
     ...options.images,
   };
-  const log = new AgentLog(app, new AliasRegistry(app), { botName: "澪", images, maxBatchEvents: 80 });
+  const log = new AgentLog(app, new AliasRegistry(app), { botName: "澪", images: { of: () => images, all: [images] }, maxBatchEvents: 80 });
 
   const requests: unknown[][] = [];
+  const models: string[] = [];
   const llm = {
-    async step(messages: unknown[]) {
+    async step(messages: unknown[], _tools: unknown, model: ModelConfig) {
       requests.push(JSON.parse(JSON.stringify(messages)));
+      models.push(model.modelName);
       await options.onStep?.(requests.length);
       const next = script.shift();
       if (!next) throw new Error("script exhausted");
@@ -71,11 +82,12 @@ async function setup(
   const tools = new ToolRegistry(options.tools ?? [echo], (c, e) => errors.push(`${c.function.name}: ${e}`));
   const segmentStarts: string[] = [];
   const runtime = new AgentRuntime(log, llm as any, tools, {
-    model: { providerId: "p", modelName: "m", maxTokens: 100 },
+    modelFor: options.modelFor ?? (() => ({ providerId: "p", modelName: "m", maxTokens: 100, cacheTtlMinutes: 240 })),
     maxSteps: options.maxSteps ?? 6,
     systemPrompt: "SYSTEM",
+    reminder: "〔提醒〕",
     isShadow: () => false,
-    sleep: { prompt: "〔{time} 睡前整理〕", maxSteps: 6, compactTokens: 1_000_000, idleMs: 3600_000, minTokens: 0, tailEvents: 30, ...options.sleep },
+    sleep: { prompt: "〔{time} 睡前整理〕", maxSteps: 6, compactTokens: 1_000_000, minTokens: 0, tailEvents: 30, ...options.sleep },
     onSegmentStart: (g) => segmentStarts.push(g),
   }, quiet);
 
@@ -87,7 +99,7 @@ async function setup(
     const msg: NormalizedMessage = { id, sender: "小林", senderId: "U1", isBot: false, timestamp: Date.now(), segments, mentions: [] };
     return events.append(G, async () => ({ kind: "message", platformMessageId: id, userId: "U1", isBot: false, timestamp: msg.timestamp, body: msg }));
   };
-  return { app, log, runtime, requests, ran, errors, say, segmentStarts };
+  return { app, log, runtime, requests, models, ran, errors, say, segmentStarts };
 }
 
 test("a wake with no tool calls ends after one step and keeps the reasoning", async () => {
@@ -118,7 +130,39 @@ test("tool results are appended and each request extends the previous one", asyn
     ["assistant", null, "记两笔"],
     ["tool", "c1", null],
     ["tool", "c2", null],
+    ["reminder", null, null],
   ]);
+  await app.stop();
+});
+
+test("every wake step ends with a reminder; sent reminders are logged and replayed in place", async () => {
+  const { app, log, runtime, requests, say } = await setup([
+    reply([call("c1", "note", { text: "a" })]),
+    reply([], { content: "草" }),
+    reply([], { content: "" }),
+  ]);
+  await say("早");
+  await runtime.wake(G);
+  await say("午");
+  await runtime.wake(G);
+
+  const reminder = { role: "reminder", content: "〔提醒〕" };
+  for (const request of requests) assert.deepEqual(request.at(-1), reminder, "every wake request ends with the reminder");
+  assert.deepEqual(requests[1].slice(0, requests[0].length), requests[0], "the step's reminder stays in place on the next step");
+  assert.deepEqual(requests[2].slice(0, requests[1].length), requests[1], "and on the next wake");
+  assert.deepEqual((await log.entries(G)).map((e) => e.role), [
+    "user", "reminder", "assistant", "tool", "reminder", "assistant",
+    "user", "assistant", // an empty reply is left out of Anthropic requests, so its reminder is not logged
+  ]);
+  assert.equal((await log.entries(G)).filter((e) => e.role === "reminder").every((e) => e.tokens === 0), true);
+  await app.stop();
+});
+
+test("a failed request leaves no reminder behind", async () => {
+  const { app, log, runtime, say } = await setup([]);
+  await say("早");
+  await assert.rejects(runtime.wake(G), /script exhausted/);
+  assert.deepEqual((await log.entries(G)).map((e) => e.role), ["user"]);
   await app.stop();
 });
 
@@ -141,7 +185,7 @@ test("messages that arrive during a wake are added before the next step", async 
   await ctx.say("早");
   await ctx.runtime.wake(G);
 
-  const last = ctx.requests[1].at(-1) as any;
+  const last = ctx.requests[1].at(-2) as any;
   assert.equal(last.role, "user");
   assert.match(last.content, /\[m2\] 小林#a1 .*: @澪 在吗/);
   await ctx.app.stop();
@@ -271,12 +315,18 @@ test("after a new segment, images no group's current segment uses are released",
   await app.stop();
 });
 
-test("a quiet group goes to sleep after the idle time", async () => {
-  const { app, log, runtime, say } = await setup([reply(), finish()], { sleep: { idleMs: 20 } });
+test("a group sleeps shortly before its model's cache would expire, counted from the last request", async () => {
+  // 缓存 5 分钟 + 40ms：减去 5 分钟提前量，最后一次请求 40ms 后睡
+  const modelFor = () => ({ providerId: "p", modelName: "m", maxTokens: 100, cacheTtlMinutes: 5 + 40 / 60_000 });
+  const { app, log, runtime, say } = await setup([reply(), reply(), finish()], { modelFor });
   await say("早");
   await runtime.wake(G);
-  runtime.noteActivity(G);
-  await new Promise((r) => setTimeout(r, 80));
+  await new Promise((r) => setTimeout(r, 20));
+  await say("午");
+  await runtime.wake(G); // a newer request restarts the countdown
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(await log.currentSegment(G), 1, "the first wake's countdown was replaced");
+  await new Promise((r) => setTimeout(r, 60));
   await runtime.wake(G); // waits for the running sleep; no new messages, so no extra model call
   assert.equal(await log.currentSegment(G), 2);
   runtime.dispose();
@@ -309,5 +359,43 @@ test("a missing tool result followed by other entries is reported, not patched",
 
   await assert.rejects(runtime.wake(G), /tool calls c1 have no results and later entries follow/);
   assert.equal((await log.entries(G)).length, 3, "the broken log must not grow");
+  await app.stop();
+});
+
+test("every step of wakes and sleeps uses the group's own model", async () => {
+  const asked: string[] = [];
+  const { app, runtime, models, say } = await setup([reply([call("c1", "note", { text: "a" })]), reply(), finish()], {
+    modelFor: (groupId) => {
+      asked.push(groupId);
+      return { providerId: "claude", modelName: groupId === G ? "claude-sonnet-5-5" : "deepseek", maxTokens: 100, cacheTtlMinutes: 60 };
+    },
+  });
+  await say("早");
+  await runtime.wake(G);
+  await runtime.requestSleep(G, true);
+
+  assert.deepEqual(models, ["claude-sonnet-5-5", "claude-sonnet-5-5", "claude-sonnet-5-5"]);
+  assert.deepEqual([...new Set(asked)], [G]);
+  await app.stop();
+});
+
+test("raw Anthropic content survives the log and is replayed unchanged", async () => {
+  const blocks = [
+    { type: "thinking", thinking: "", signature: "sig-1" },
+    { type: "text", text: "我记一下", citations: null },
+    { type: "tool_use", id: "toolu_1", name: "note", input: { text: "a" } },
+  ] as any;
+  const { app, log, runtime, requests, say } = await setup([
+    reply([call("toolu_1", "note", { text: "a" })], { content: "我记一下", anthropicContent: blocks }),
+    reply(),
+  ]);
+  await say("早");
+  await runtime.wake(G);
+
+  const stored = (await log.entries(G))[2];
+  assert.deepEqual(stored.anthropicContent, blocks);
+  assert.equal(stored.reasoning, null);
+  assert.deepEqual((requests[1][3] as any).anthropicContent, blocks);
+  assert.deepEqual((requests[1][3] as any).tool_calls, [call("toolu_1", "note", { text: "a" })]);
   await app.stop();
 });

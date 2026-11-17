@@ -25,7 +25,7 @@ async function setup(maxBatchEvents = 80) {
   const events = new EventStore(app);
   const aliases = new AliasRegistry(app);
   const images = new InlineImageTransport(new ImageFitter(mediaDir, 64 * 64), 2 ** 20);
-  const log = new AgentLog(app, aliases, { botName: "澪", images, maxBatchEvents });
+  const log = new AgentLog(app, aliases, { botName: "澪", images: { of: () => images, all: [images] }, maxBatchEvents });
 
   let n = 0;
   const say = (senderId: string, text: string, extra: Partial<NormalizedMessage> = {}) => {

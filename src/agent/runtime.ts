@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Context } from "koishi";
-import type { ModelConfig } from "../llm/provider";
 import { DATA_DIR } from "../paths";
 import { parseGroupId } from "../runtime/groups";
 import type { AgentLLM } from "./llm";
-import type { AgentLog } from "./log-store";
+import type { AgentLog, ChatMessage } from "./log-store";
+import { SLEEP_MARGIN_MINUTES, type AgentModelConfig } from "./models";
 import type { ToolRegistry } from "./tools";
 
 type Logger = ReturnType<Context["logger"]>;
@@ -15,6 +15,10 @@ export function loadAgentSystemPrompt(personaFile: string): string {
   const persona = readFileSync(join(DATA_DIR, "persona", personaFile), "utf8").trim();
   const environment = readFileSync(join(DATA_DIR, "agent", "environment.md"), "utf8").trim();
   return `${persona}\n\n---\n\n${environment}`;
+}
+
+export function loadReminder(): string {
+  return readFileSync(join(DATA_DIR, "agent", "reminder.md"), "utf8").trim();
 }
 
 export function loadSleepPrompt(): string {
@@ -27,8 +31,6 @@ export interface SleepOptions {
   maxSteps: number;
   /** log 达到这个大小，在这次唤醒结束后睡 */
   compactTokens: number;
-  /** 群里安静这么久就睡 */
-  idleMs: number;
   /** log 小于这个就不值得整理 */
   minTokens: number;
   /** 新一段开头带上的最近消息条数 */
@@ -36,9 +38,15 @@ export interface SleepOptions {
 }
 
 export interface AgentRuntimeOptions {
-  model: ModelConfig;
+  /** 这个群用的 agent 模型（按群覆盖，没覆盖的用默认）；唤醒和睡前整理的每一步都按它选 */
+  modelFor: (groupId: string) => AgentModelConfig;
   maxSteps: number;
   systemPrompt: string;
+  /**
+   * 唤醒时每一步请求末尾的说话提醒。人设在 log 最前面，log 一长就被她自己最近的话盖过去。
+   * 提醒只管那一轮；请求成功后连同回复一起写进 log，以后原样发回、留在原位，前缀不变。
+   */
+  reminder: string;
   isShadow: (groupId: string) => boolean;
   sleep: SleepOptions;
   /** 开了新的一段 log 之后调用（例如重置记忆浮现的去重） */
@@ -90,13 +98,20 @@ export class AgentRuntime {
     return this.drain(groupId);
   }
 
-  /** 群里有新动静时调用：重新开始"安静多久就睡"的计时 */
-  noteActivity(groupId: string): void {
+  /**
+   * 缓存从最后一次请求开始计时：唤醒的请求发出后，安排在这个群的模型缓存过期前 SLEEP_MARGIN_MINUTES 分钟睡前整理。
+   * 整理读到的还是缓存，之后从小的一段重新开始；不然下次唤醒要把整段按写入价重写一遍。
+   * 计时期间又发了请求就重新计时；到点时如果有更新的请求（可能还在进行），这次不算。
+   */
+  private scheduleSleep(groupId: string, sentAt: number): void {
     clearTimeout(this.idleTimers.get(groupId));
+    const ttlMs = this.options.modelFor(groupId).cacheTtlMinutes * 60_000;
+    const delay = sentAt + ttlMs - SLEEP_MARGIN_MINUTES * 60_000 - Date.now();
     this.idleTimers.set(groupId, setTimeout(() => {
       this.idleTimers.delete(groupId);
+      if (this.lastRequestAt.get(groupId) !== sentAt) return;
       this.requestSleep(groupId).catch((err) => this.logger.error(`[${groupId}] 睡前整理失败:`, err));
-    }, this.options.sleep.idleMs));
+    }, Math.max(0, delay)).unref());
   }
 
   dispose(): void {
@@ -173,35 +188,46 @@ export class AgentRuntime {
     const ctx = { groupId, platform, shadow: this.options.isShadow(groupId), allowOutward: options.allowOutward };
     let promptTokens = 0;
     let cachedTokens = 0;
+    let cacheWriteTokens = 0;
     let toolCalls = 0;
 
     for (let step = 1; step <= options.maxSteps; step++) {
       if (step > 1 && options.appendArrivals) await this.log.appendPendingBatch(groupId);
       const entries = await this.log.entries(groupId);
-      const messages = [
+      const messages: ({ role: "system"; content: string } | ChatMessage)[] = [
         { role: "system" as const, content: this.options.systemPrompt },
         ...(await this.log.toChatMessages(entries)),
       ];
-
+      // 唤醒的每一步末尾都带一份提醒：工具结果也算新一轮，之前那份已经清掉了
+      if (options.appendArrivals) messages.push({ role: "reminder", content: this.options.reminder });
       const sentAt = Date.now();
       const gap = sentAt - (this.lastRequestAt.get(groupId) ?? sentAt);
-      const result = await this.llm.step(messages, tools, this.options.model);
       this.lastRequestAt.set(groupId, sentAt);
+      const result = await this.llm.step(messages, tools, this.options.modelFor(groupId));
+      if (options.appendArrivals) this.scheduleSleep(groupId, sentAt);
       promptTokens += result.usage.promptTokens;
       cachedTokens += result.usage.cachedTokens;
-      // 实测 DeepSeek 的缓存能留多久：长间隔后的命中情况
+      cacheWriteTokens += result.usage.cacheWriteTokens;
+      // 实测缓存能留多久：长间隔后的命中情况（缓存写入只有 Anthropic 单独报告，写入多说明没命中）
       if (gap >= 30 * 60_000) {
-        this.logger.info(`[${groupId}] 距上次请求 ${duration(gap)}，缓存命中 ${result.usage.cachedTokens}/${result.usage.promptTokens}`);
+        this.logger.info(`[${groupId}] 距上次请求 ${duration(gap)}，缓存命中 ${result.usage.cachedTokens}/${result.usage.promptTokens}，缓存写入 ${result.usage.cacheWriteTokens}`);
       }
 
+      // 提醒和回复一起写进 log：请求失败就都不写，log 里不会留下后面没有 assistant 回合的提醒（Anthropic 会拒绝）。
+      // 什么都没回的一步在 Anthropic 请求里会被省略，这时也不写提醒，否则它后面会紧跟下一条 user 消息
+      const rendered = result.anthropicContent ? result.anthropicContent.length > 0 : Boolean(result.content) || result.toolCalls.length > 0;
+      if (options.appendArrivals && rendered) {
+        await this.log.appendEntry(groupId, { role: "reminder", content: [{ type: "text", text: this.options.reminder }] });
+      }
       await this.log.appendEntry(groupId, {
         role: "assistant",
         content: result.content ? [{ type: "text", text: result.content }] : [],
         toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
         reasoning: result.reasoning,
+        anthropicContent: result.anthropicContent,
       });
       if (result.toolCalls.length === 0) {
-        this.logger.debug(`[${groupId}] agent 完成: 工具调用 ${toolCalls} 次, prompt ${promptTokens} tokens (缓存命中 ${cachedTokens})`);
+        this.logger.debug(`[${groupId}] agent 完成: 工具调用 ${toolCalls} 次, prompt ${promptTokens} tokens (缓存命中 ${cachedTokens}，缓存写入 ${cacheWriteTokens})`);
         return { text: result.content, endedWithTools: false };
       }
 

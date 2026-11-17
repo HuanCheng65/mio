@@ -1,5 +1,6 @@
 import { Schema } from "koishi";
 import { ProviderConfig, ModelConfig } from "./llm/provider";
+import type { AgentModelConfig } from "./agent/models";
 
 export interface Config {
   botName: string;
@@ -48,7 +49,9 @@ export interface Config {
     poolSize: number;
   };
   agent: {
-    model: ModelConfig;
+    model: AgentModelConfig;
+    /** 按群覆盖 agent 模型，键是群 ID（如 qq:2860C352DF05A086C87D7CFD6FA5012E）；没列出的群用 model */
+    groupModels: Record<string, AgentModelConfig>;
     personaFile: string;
     maxSteps: number;
     maxBatchEvents: number;
@@ -60,7 +63,6 @@ export interface Config {
     sleep: {
       maxSteps: number;
       compactTokens: number;
-      idleHours: number;
       minTokens: number;
       tailEvents: number;
     };
@@ -83,9 +85,9 @@ export const Config: Schema<Config> = Schema.object({
     Schema.object({
       id: Schema.string().required().description("供应商 ID（自动生成，无需手填）"),
       name: Schema.string().required().description("供应商名称（显示用）"),
-      type: Schema.union(["openai", "gemini"] as const)
+      type: Schema.union(["openai", "gemini", "anthropic"] as const)
         .default("openai")
-        .description("供应商类型（openai: OpenAI-compatible API, gemini: Google Gemini API）"),
+        .description("供应商类型（openai: OpenAI-compatible API, gemini: Google Gemini API, anthropic: Anthropic Messages API，目前只供 agent 使用）"),
       apiKey: Schema.string().role("secret").required().description("API Key"),
       baseUrl: Schema.string().description("API Base URL（仅 OpenAI-compatible 需要）"),
       dialect: Schema.union(["openai", "deepseek", "qwen", "openrouter", "siliconflow", "custom"] as const)
@@ -97,7 +99,7 @@ export const Config: Schema<Config> = Schema.object({
           .description("inline: base64 内联，每步随请求上传；deepseek-files: 经 DeepSeek Files API 上传一次，之后只引用 file_id"),
         maxPixels: Schema.number().description("发送前缩到的总像素量（填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300）"),
         inlineBudgetMiB: Schema.number().description("仅 inline：一段 log 的图片最多占多少请求体（MiB），超过就睡前整理"),
-      }).description("agent 发图方式（type=openai）"),
+      }).description("agent 发图方式（type=openai / anthropic；anthropic 只支持 inline）"),
     }),
   )
     .default([
@@ -226,6 +228,8 @@ export const Config: Schema<Config> = Schema.object({
       modelName: Schema.string().default("deepseek-flash").description("模型名称"),
       temperature: Schema.number().description("温度参数（不填用模型默认）"),
       maxTokens: Schema.number().default(4096).description("最大 Token 数（思考模型的推理也计入）"),
+      // DeepSeek 的缓存时长不能设置，实测隔几个小时仍能命中
+      cacheTtlMinutes: Schema.number().default(240).description("提示缓存能留多久（分钟）；空闲到快过期时睡前整理。anthropic 只能填 60（1 小时 TTL）"),
       reasoning: Schema.object({
         // 回放对比：开着思考时她会先打几版草稿再挑措辞，说出来像组织过的句子；关掉更像脱口而出
         mode: Schema.union(["auto", "off", "effort", "budget"] as const).default("off"),
@@ -234,6 +238,20 @@ export const Config: Schema<Config> = Schema.object({
       }).description("推理控制"),
       extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
     }).description("agent 模型（mio.agent 模式的群使用；embedding 和搜索沿用上面的配置）"),
+    groupModels: Schema.dict(Schema.object({
+      providerId: Schema.string().required().description("供应商 ID（OpenAI 兼容或 anthropic）"),
+      modelName: Schema.string().required().description("模型名称"),
+      temperature: Schema.number().description("温度参数（不填用模型默认；anthropic 不能填）"),
+      maxTokens: Schema.number().required().description("最大 Token 数（思考模型的推理也计入）"),
+      cacheTtlMinutes: Schema.number().required().description("提示缓存能留多久（分钟）；空闲到快过期时睡前整理。anthropic 只能填 60（1 小时 TTL）"),
+      reasoning: Schema.object({
+        // 和默认 agent 模型一致：默认关思考（anthropic 上是 between_tools）
+        mode: Schema.union(["auto", "off", "effort", "budget"] as const).default("off"),
+        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
+        budgetTokens: Schema.number(),
+      }).description("推理控制"),
+      extraBody: Schema.dict(Schema.any()).description("附加请求体字段（anthropic 不支持）"),
+    })).default({}).description("按群覆盖 agent 模型（键是群 ID，如 qq:2860C352DF05A086C87D7CFD6FA5012E；没列出的群用上面的 agent 模型）"),
     personaFile: Schema.string().default("mio-agent.md").description("agent 人设文件名（data/persona 下）"),
     maxSteps: Schema.number().default(6).description("每次唤醒最多几步工具调用"),
     maxBatchEvents: Schema.number().default(80).description("一批最多渲染多少条消息（积压过多时只看最近的）"),
@@ -245,7 +263,6 @@ export const Config: Schema<Config> = Schema.object({
     sleep: Schema.object({
       maxSteps: Schema.number().default(12).description("睡前整理最多几步"),
       compactTokens: Schema.number().default(100_000).description("log 达到这个大小就睡"),
-      idleHours: Schema.number().default(4).description("群里安静多少小时就睡"),
       minTokens: Schema.number().default(8000).description("log 小于这个不整理"),
       tailEvents: Schema.number().default(30).description("新一段开头带上的最近消息条数"),
     }).description("睡眠与压缩"),

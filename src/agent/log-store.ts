@@ -1,3 +1,4 @@
+import type { BetaContentBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { $, Context } from "koishi";
 import type { NormalizedMessage } from "../perception/types";
 import type { AliasRegistry } from "./aliases";
@@ -11,7 +12,11 @@ import { estimateTokens, IMAGE_TOKENS } from "./tokens";
  * 重新渲染（哪怕只是改了渲染代码）都会改变前缀、打掉缓存。
  * segment 是压缩代数：压缩后开新的一段，旧段保留作记录。
  */
-export type LogRole = "user" | "assistant" | "tool";
+/**
+ * reminder：唤醒时发出的说话提醒，只管它后面那一轮。记下发出时的原文，以后原样发回、留在原位，
+ * 前缀才不会因为提醒挪走而变化（Anthropic 上还会让后面的思考块失效）。
+ */
+export type LogRole = "user" | "assistant" | "tool" | "reminder";
 
 export interface ToolCall {
   id: string;
@@ -29,6 +34,11 @@ export interface MioLogEntryRow {
   toolCallId: string | null;
   /** assistant 条目的推理内容（思考模式），原样发回以保持前缀稳定 */
   reasoning: string | null;
+  /**
+   * Anthropic 模型产生的 assistant 条目：响应 content 原样保存（含思考块和签名、fallback 块），
+   * 之后发给 Anthropic 时原样发回。content / toolCalls 同时按原有形状填好，供工具循环和 OpenAI 兼容模型使用。
+   */
+  anthropicContent: BetaContentBlock[] | null;
   /** user 批次覆盖到的最后一个事件 seq */
   lastSeq: number | null;
   tokens: number;
@@ -51,6 +61,7 @@ export function extendLogTable(ctx: Context): void {
     toolCalls: { type: "json", nullable: true },
     toolCallId: { type: "string", length: 63, nullable: true },
     reasoning: { type: "text", nullable: true },
+    anthropicContent: { type: "json", nullable: true },
     lastSeq: { type: "unsigned", nullable: true },
     tokens: "unsigned",
     createdAt: "unsigned(8)",
@@ -62,8 +73,17 @@ export function extendLogTable(ctx: Context): void {
 
 export type ChatMessage =
   | { role: "user"; content: string | ({ type: "text"; text: string } | ImagePart)[] }
-  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[]; reasoning_content?: string }
-  | { role: "tool"; tool_call_id: string; content: string };
+  | {
+    role: "assistant";
+    content: string | null;
+    tool_calls?: ToolCall[];
+    reasoning_content?: string;
+    /** 不是 OpenAI 的字段：只给 Anthropic 转换用，发给 OpenAI 兼容接口前要去掉 */
+    anthropicContent?: BetaContentBlock[];
+  }
+  | { role: "tool"; tool_call_id: string; content: string }
+  /** 不是 OpenAI 的角色：各供应商的请求构造各自处理（Anthropic 是只管一轮的 system 消息） */
+  | { role: "reminder"; content: string };
 
 export interface NewLogEntry {
   role: LogRole;
@@ -71,6 +91,14 @@ export interface NewLogEntry {
   toolCalls?: ToolCall[];
   toolCallId?: string;
   reasoning?: string | null;
+  anthropicContent?: BetaContentBlock[] | null;
+}
+
+/** 每个群按它当前的模型用对应供应商的发图方式 */
+export interface GroupImages {
+  of(groupId: string): ImageTransport;
+  /** 所有用到的发图方式（释放不再引用的图时逐个处理） */
+  all: ImageTransport[];
 }
 
 function partsTokens(parts: LogPart[]): number {
@@ -89,7 +117,7 @@ export class AgentLog {
     private aliases: AliasRegistry,
     private options: {
       botName: string;
-      images: ImageTransport;
+      images: GroupImages;
       maxBatchEvents: number;
       /** 给每批附上旁注（记忆的浮现）；在别名分配之后调用 */
       annotate?: (groupId: string, events: MioEventRow[]) => Promise<string[]>;
@@ -223,8 +251,11 @@ export class AgentLog {
       toolCalls: entry.toolCalls ?? null,
       toolCallId: entry.toolCallId ?? null,
       reasoning: entry.reasoning ?? null,
+      // 思考块的签名不算 token，不计入 tokens，免得虚高提前触发睡前整理
+      anthropicContent: entry.anthropicContent ?? null,
       lastSeq,
-      tokens: partsTokens(entry.content) + toolCallTokens + (entry.reasoning ? estimateTokens(entry.reasoning) : 0),
+      // 发过的提醒之后不再显示（Anthropic 不计费，OpenAI 兼容的请求里不发），不计入 tokens
+      tokens: entry.role === "reminder" ? 0 : partsTokens(entry.content) + toolCallTokens + (entry.reasoning ? estimateTokens(entry.reasoning) : 0),
       createdAt: Date.now(),
     });
   }
@@ -242,7 +273,7 @@ export class AgentLog {
 
   /** 当前段的图片是否超出一次请求能带的量 */
   async overImageBudget(groupId: string): Promise<boolean> {
-    return this.options.images.overBudget(imageFiles(await this.entries(groupId)));
+    return this.options.images.of(groupId).overBudget(imageFiles(await this.entries(groupId)));
   }
 
   /** 开新段之后：释放所有群当前段都不再引用的图（同一张图可能出现在好几个群里），返回释放了几张 */
@@ -257,7 +288,9 @@ export class AgentLog {
       const entries = await this.ctx.database.get("mio.log_entry", { groupId, segment }, ["content"]);
       for (const file of imageFiles(entries)) keep.add(file);
     }
-    return this.options.images.release(keep, before);
+    let released = 0;
+    for (const transport of this.options.images.all) released += await transport.release(keep, before);
+    return released;
   }
 
   /** 转成 OpenAI 兼容的消息；文本-only 的 user 条目用字符串，保证同一条目每次序列化结果相同 */
@@ -268,19 +301,22 @@ export class AgentLog {
       if (e.role === "tool") {
         if (!e.toolCallId) throw new Error(`log entry ${e.id}: tool result without toolCallId`);
         messages.push({ role: "tool", tool_call_id: e.toolCallId, content: text });
+      } else if (e.role === "reminder") {
+        messages.push({ role: "reminder", content: text });
       } else if (e.role === "assistant") {
         messages.push({
           role: "assistant",
           content: text || null,
           ...(e.toolCalls ? { tool_calls: e.toolCalls } : {}),
           ...(e.reasoning ? { reasoning_content: e.reasoning } : {}),
+          ...(e.anthropicContent ? { anthropicContent: e.anthropicContent } : {}),
         });
       } else if (e.content.every((p) => p.type === "text")) {
         messages.push({ role: "user", content: text });
       } else {
         const parts = [];
         for (const p of e.content) {
-          parts.push(p.type === "text" ? { type: "text" as const, text: p.text } : await this.options.images.part(p.file));
+          parts.push(p.type === "text" ? { type: "text" as const, text: p.text } : await this.options.images.of(e.groupId).part(p.file));
         }
         messages.push({ role: "user", content: parts });
       }
