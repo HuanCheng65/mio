@@ -21,6 +21,7 @@
         <select v-model="provider.type" class="form-input">
           <option value="openai">OpenAI 兼容</option>
           <option value="gemini">Google Gemini</option>
+          <option value="anthropic">Anthropic（仅 agent）</option>
         </select>
       </div>
 
@@ -69,25 +70,37 @@
         />
       </div>
 
-      <div v-if="provider.type === 'openai'" class="form-group">
+      <div v-if="provider.type === 'anthropic'" class="form-group form-group--wide">
+        <span class="form-label">HTTP 代理</span>
+        <input
+          :value="provider.proxyUrl ?? ''"
+          class="form-input mono"
+          type="text"
+          placeholder="http://127.0.0.1:7890"
+          @input="setProxyUrl"
+        />
+        <span class="form-hint">服务器直连 Anthropic 会被按地区拒绝（403），填本机代理地址；留空表示直连</span>
+      </div>
+
+      <div v-if="provider.type !== 'gemini'" class="form-group">
         <span class="form-label">agent 发图方式</span>
         <select :value="provider.images?.transport ?? ''" class="form-input" @change="setTransport">
           <option value="">未配置（agent 不能用这个供应商）</option>
-          <option value="deepseek-files">DeepSeek Files API（每张图只传一次）</option>
+          <option v-if="provider.type === 'openai'" value="deepseek-files">DeepSeek Files API（每张图只传一次）</option>
           <option value="inline">内联 base64（每步随请求上传）</option>
         </select>
       </div>
 
-      <div v-if="provider.type === 'openai' && provider.images?.transport" class="form-group">
+      <div v-if="provider.type !== 'gemini' && provider.images?.transport" class="form-group">
         <span class="form-label">缩图目标（总像素）</span>
         <input v-model.number="provider.images.maxPixels" class="form-input mono" type="number" placeholder="1690000" />
-        <span class="form-hint">填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300 = 1690000</span>
+        <span class="form-hint">填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300 = 1690000，Claude 约 1150000</span>
       </div>
 
-      <div v-if="provider.type === 'openai' && provider.images?.transport === 'inline'" class="form-group">
+      <div v-if="provider.type !== 'gemini' && provider.images?.transport === 'inline'" class="form-group">
         <span class="form-label">内联图片预算（MiB）</span>
         <input v-model.number="provider.images.inlineBudgetMiB" class="form-input mono" type="number" placeholder="32" />
-        <span class="form-hint">一段 log 的图片超过这个量就睡前整理，要低于供应商的请求体上限</span>
+        <span class="form-hint">一段 log 的图片超过这个量就睡前整理，要低于供应商的请求体上限（Claude 是 32 MB，base64 再大三分之一，填 16 左右）</span>
       </div>
     </div>
 
@@ -237,6 +250,12 @@ function setTransport(event: Event) {
     return;
   }
   props.provider.images = { ...props.provider.images, transport };
+}
+
+function setProxyUrl(event: Event) {
+  const url = (event.target as HTMLInputElement).value.trim();
+  if (url) props.provider.proxyUrl = url;
+  else delete (props.provider as any).proxyUrl;
 }
 
 function commitExtraBody() {

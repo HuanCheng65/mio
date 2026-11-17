@@ -82,9 +82,25 @@
             :providers="draft.providers"
             :model-options="modelOptionsByProvider[slot.get().providerId] ?? []"
             :loading-models="loading.listModels"
+            :removable="!!slot.remove"
             @update:model-value="slot.set($event)"
             @list-models="loadModels($event)"
+            @remove="slot.remove?.()"
           />
+        </div>
+
+        <div class="group-add">
+          <input
+            v-model.trim="newGroupId"
+            class="form-input mono"
+            type="text"
+            placeholder="群 ID，如 qq:EF11ED8C7B87648111CF06805F5EF5F8"
+            @keydown.enter="addGroup"
+          />
+          <button class="btn btn--ghost" type="button" :disabled="!newGroupId" @click="addGroup">
+            <Plus :size="14" />
+            <span>给群单独指定 agent 模型</span>
+          </button>
         </div>
       </div>
 
@@ -105,6 +121,7 @@
 </template>
 
 <script lang="ts" setup>
+import { ref } from "vue";
 import { Plus, RotateCcw, Save } from "lucide-vue-next";
 import ProviderEditor from "./provider-editor.vue";
 import ModelSlotEditor from "./model-slot-editor.vue";
@@ -134,8 +151,16 @@ const {
   duplicateProvider,
   testProvider,
   loadModels,
+  addGroupModel,
   toggleApiKeyReveal,
 } = props.studio;
+
+const newGroupId = ref("");
+
+function addGroup() {
+  addGroupModel(newGroupId.value);
+  newGroupId.value = "";
+}
 </script>
 
 <style scoped>
@@ -285,6 +310,15 @@ const {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.group-add {
+  display: flex;
+  gap: 8px;
+}
+
+.group-add .form-input {
+  flex: 1;
 }
 
 .status-badge {

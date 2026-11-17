@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
 import { Config as ConfigSchema, type Config as MioConfig } from "../config";
 import { createAnthropicClient, type ProviderConfig, type ModelConfig } from "../llm/provider";
+import { checkAgentModels } from "../agent/models";
 
 export interface ProviderTestResult {
   ok: boolean;
@@ -135,6 +136,12 @@ export class ConfigService {
       if (!slot.modelName) {
         throw new Error(`${path} 未填写模型名称`);
       }
+    }
+
+    // 和启动时同一套检查：不合格的话保存后新运行时也起不来，不如保存前就拦下
+    const agentModels = checkAgentModels(cfg.agent, cfg.providers);
+    if (typeof agentModels === "string") {
+      throw new Error(agentModels);
     }
   }
 }

@@ -6,6 +6,9 @@
         <span class="slot-desc">{{ description }}</span>
       </div>
       <span class="slot-path mono">{{ path }}</span>
+      <button v-if="removable" class="btn btn--subtle" type="button" :title="`删除 ${label}`" @click="$emit('remove')">
+        <Trash2 :size="12" />
+      </button>
     </div>
 
     <div class="form-group">
@@ -24,7 +27,7 @@
         >
           <Check v-if="modelValue.providerId === p.id" :size="12" class="chip-check" />
           <span class="chip-name">{{ p.name || "未命名供应商" }}</span>
-          <span class="chip-type">{{ p.type === 'openai' ? (p.dialect ?? 'openai') : 'gemini' }}</span>
+          <span class="chip-type">{{ p.type === 'openai' ? (p.dialect ?? 'openai') : p.type }}</span>
         </button>
       </div>
     </div>
@@ -57,8 +60,8 @@
         </datalist>
       </div>
 
-      <template v-if="kind === 'chat'">
-        <div class="form-group">
+      <template v-if="kind !== 'embedding'">
+        <div v-if="selectedProvider?.type !== 'anthropic'" class="form-group">
           <span class="form-label">Temperature</span>
           <input
             :value="modelValue.temperature ?? ''"
@@ -85,6 +88,20 @@
           />
         </div>
 
+        <div v-if="kind === 'agent'" class="form-group">
+          <span class="form-label">缓存 TTL（分钟）</span>
+          <input
+            :value="(modelValue as AgentModelConfig).cacheTtlMinutes ?? ''"
+            class="form-input"
+            type="number"
+            step="1"
+            min="0"
+            :placeholder="selectedProvider?.type === 'anthropic' ? '60' : '240'"
+            @input="updateNumber('cacheTtlMinutes', ($event.target as HTMLInputElement).value)"
+          />
+          <span class="form-hint">空闲到快过期时睡前整理；anthropic 只能填 60</span>
+        </div>
+
         <template v-if="availableModes.length > 1">
           <div class="form-group">
             <span class="form-label">推理模式</span>
@@ -97,13 +114,14 @@
             </select>
           </div>
 
-          <div v-if="reasoningMode === 'effort'" class="form-group">
+          <div v-if="reasoningMode === 'effort' || effortOptional" class="form-group">
             <span class="form-label">Effort 等级</span>
             <select
-              :value="effortValue"
+              :value="effortOptional ? (modelValue.reasoning?.effort ?? '') : effortValue"
               class="form-input"
-              @change="updateReasoningField('effort', ($event.target as HTMLSelectElement).value as ReasoningEffort)"
+              @change="updateEffort(($event.target as HTMLSelectElement).value as ReasoningEffort | '')"
             >
+              <option v-if="effortOptional" value="">不设</option>
               <option v-for="e in effortOptions" :key="e" :value="e">{{ e }}</option>
             </select>
           </div>
@@ -146,28 +164,32 @@
 
 <script lang="ts" setup>
 import { computed, ref, watch } from "vue";
-import { Check, ChevronRight, RotateCw } from "lucide-vue-next";
+import { Check, ChevronRight, RotateCw, Trash2 } from "lucide-vue-next";
 import type {
   ModelConfig,
   ProviderConfig,
   ReasoningEffort,
   ReasoningMode,
 } from "../../src/llm/provider";
+import type { AgentModelConfig } from "../../src/agent/models";
 
 const props = defineProps<{
   path: string;
   label: string;
   description: string;
-  kind: "chat" | "embedding";
+  /** agent：多一个缓存 TTL（AgentModelConfig.cacheTtlMinutes） */
+  kind: "chat" | "embedding" | "agent";
   modelValue: ModelConfig;
   providers: ProviderConfig[];
   modelOptions: string[];
   loadingModels: boolean;
+  removable?: boolean;
 }>();
 
 const emit = defineEmits<{
   (event: "update:modelValue", value: ModelConfig): void;
   (event: "list-models", providerId: string): void;
+  (event: "remove"): void;
 }>();
 
 const selectedProvider = computed(() => props.providers.find((p) => p.id === props.modelValue.providerId) ?? null);
@@ -180,6 +202,7 @@ const availableModes = computed<ReasoningMode[]>(() => {
   const provider = selectedProvider.value;
   if (!provider) return ["auto"];
   if (provider.type === "gemini") return ["auto", "off", "budget"];
+  if (provider.type === "anthropic") return ["auto", "off", "effort"];
   const dialect = provider.dialect ?? "openai";
   switch (dialect) {
     case "openai":
@@ -199,7 +222,12 @@ const availableModes = computed<ReasoningMode[]>(() => {
 
 const effortOptions = computed<ReasoningEffort[]>(() => {
   const provider = selectedProvider.value;
-  if (!provider || provider.type !== "openai") return [];
+  if (!provider) return [];
+  if (provider.type === "anthropic") {
+    // 关思考（between_tools）时 effort 最高只能是 high；Anthropic 没有 minimal
+    return reasoningMode.value === "off" ? ["low", "medium", "high"] : ["low", "medium", "high", "max"];
+  }
+  if (provider.type !== "openai") return [];
   const dialect = provider.dialect ?? "openai";
   if (dialect === "deepseek") return ["high", "max"];
   if (dialect === "openai" || dialect === "openrouter") return ["minimal", "low", "medium", "high"];
@@ -212,6 +240,19 @@ const effortValue = computed<ReasoningEffort>(() => {
   if (current && options.includes(current)) return current;
   return options[options.length - 1] ?? "high";
 });
+
+/** anthropic 关思考时 effort 可设可不设（output_config.effort） */
+const effortOptional = computed(() => selectedProvider.value?.type === "anthropic" && reasoningMode.value === "off");
+
+function updateEffort(value: ReasoningEffort | "") {
+  if (value) {
+    updateReasoningField("effort", value);
+    return;
+  }
+  const reasoning = { ...(props.modelValue.reasoning ?? { mode: "off" as ReasoningMode }) };
+  delete reasoning.effort;
+  commit({ ...props.modelValue, reasoning });
+}
 
 function modeLabel(m: ReasoningMode): string {
   switch (m) {
@@ -246,9 +287,9 @@ function updateField<K extends keyof ModelConfig>(field: K, value: ModelConfig[K
   commit({ ...props.modelValue, [field]: value });
 }
 
-function updateNumber(field: "temperature" | "maxTokens", raw: string) {
+function updateNumber(field: "temperature" | "maxTokens" | "cacheTtlMinutes", raw: string) {
   const trimmed = raw.trim();
-  const next = { ...props.modelValue };
+  const next: ModelConfig & { cacheTtlMinutes?: number } = { ...props.modelValue };
   if (trimmed === "") {
     delete next[field];
   } else {
@@ -446,6 +487,12 @@ function commitExtraBody() {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.form-hint {
+  font-size: 11px;
+  color: var(--c-text-4);
+  line-height: 1.4;
 }
 
 .form-label {

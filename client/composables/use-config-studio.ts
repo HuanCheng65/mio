@@ -3,6 +3,7 @@ import { message, send } from "@koishijs/client";
 import type { Config as MioConfig } from "../../src/config";
 import type { ModelConfig, ProviderConfig } from "../../src/llm/provider";
 import type { ProviderTestResult } from "../../src/console/config-service";
+import type { AgentModelConfig } from "../../src/agent/models";
 
 type SaveState = "idle" | "dirty" | "saving" | "failed";
 
@@ -69,6 +70,8 @@ export function useConfigStudio() {
       add(cfg.memory.distillation?.providerId);
     }
     if (cfg.search?.enabled) add(cfg.search.compression?.providerId);
+    add(cfg.agent?.model?.providerId);
+    for (const model of Object.values(cfg.agent?.groupModels ?? {})) add(model.providerId);
     return set;
   });
 
@@ -196,6 +199,18 @@ export function useConfigStudio() {
     }
   }
 
+  /** 给一个群单独指定 agent 模型；新条目照默认 agent 模型填，再按需改 */
+  function addGroupModel(rawGroupId: string) {
+    if (!draft.value) return;
+    const groupId = rawGroupId.trim();
+    if (!groupId) return;
+    if (draft.value.agent.groupModels[groupId]) {
+      message.error(`群 ${groupId} 已经单独指定了模型`);
+      return;
+    }
+    draft.value.agent.groupModels[groupId] = clone(draft.value.agent.model);
+  }
+
   function toggleApiKeyReveal(id: string) {
     apiKeyRevealed[id] = !apiKeyRevealed[id];
   }
@@ -204,9 +219,10 @@ export function useConfigStudio() {
     path: string;
     label: string;
     description: string;
-    kind: "chat" | "embedding";
+    kind: "chat" | "embedding" | "agent";
     get: () => ModelConfig;
     set: (next: ModelConfig) => void;
+    remove?: () => void;
   }
 
   const modelSlots = computed<ModelSlot[]>(() => {
@@ -280,6 +296,31 @@ export function useConfigStudio() {
         },
       });
     }
+    slots.push({
+      path: "agent.model",
+      label: "agent 模型",
+      description: "agent 运行时的默认模型。",
+      kind: "agent",
+      get: () => cfg.agent.model,
+      set: (v) => {
+        cfg.agent.model = v as AgentModelConfig;
+      },
+    });
+    for (const groupId of Object.keys(cfg.agent.groupModels)) {
+      slots.push({
+        path: `agent.groupModels.${groupId}`,
+        label: `群 ${groupId}`,
+        description: "这个群用的 agent 模型，覆盖默认。",
+        kind: "agent",
+        get: () => cfg.agent.groupModels[groupId],
+        set: (v) => {
+          cfg.agent.groupModels[groupId] = v as AgentModelConfig;
+        },
+        remove: () => {
+          delete cfg.agent.groupModels[groupId];
+        },
+      });
+    }
     return slots;
   });
 
@@ -304,6 +345,7 @@ export function useConfigStudio() {
     duplicateProvider,
     testProvider,
     loadModels,
+    addGroupModel,
     toggleApiKeyReveal,
   };
 }
