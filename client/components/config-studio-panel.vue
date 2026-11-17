@@ -4,18 +4,57 @@
 
     <template v-else>
       <div v-if="draft.providers.length === 0" class="warn-banner">
-        ⚠ 当前未配置任何供应商，运行时未启动。请先添加 Provider 并指定 chat 模型，保存后插件将自动恢复。
+        当前未配置任何供应商，运行时未启动。请先添加供应商并指定对话模型，保存后插件将自动恢复。
       </div>
 
-      <div class="providers-grid">
-        <div class="panel panel--list">
-          <div class="panel-header">
-            <h2 class="panel-title">供应商</h2>
-            <span class="badge">{{ draft.providers.length }}</span>
+      <section class="section">
+        <h2 class="section-title">
+          模型槽位
+          <small>只列出已启用模块的槽位；点一行展开编辑</small>
+        </h2>
+        <div class="card">
+          <ModelSlotEditor
+            v-for="slot in baseSlots"
+            :key="slot.path"
+            v-bind="slotProps(slot)"
+            @update:model-value="slot.set($event)"
+            @list-models="loadModels($event)"
+          />
+          <div class="group-heading">按群覆盖 agent 模型</div>
+          <ModelSlotEditor
+            v-for="slot in groupSlots"
+            :key="slot.path"
+            v-bind="slotProps(slot)"
+            label="群"
+            :sublabel="slot.path.slice(GROUP_PATH_PREFIX.length)"
+            removable
+            @update:model-value="slot.set($event)"
+            @list-models="loadModels($event)"
+            @remove="slot.remove?.()"
+          />
+          <div class="group-add">
+            <input
+              v-model.trim="newGroupId"
+              class="form-input mono"
+              type="text"
+              placeholder="群 ID，形如 qq:&lt;32 位十六进制&gt;"
+              @keydown.enter="addGroup"
+            />
+            <button class="btn" type="button" :disabled="!newGroupId" @click="addGroup">
+              <Plus :size="13" />
+              <span>添加</span>
+            </button>
           </div>
+        </div>
+      </section>
 
-          <div v-if="draft.providers.length === 0" class="empty-state empty-state--sm">未配置供应商</div>
-          <div v-else class="provider-list">
+      <section class="section">
+        <h2 class="section-title">
+          供应商
+          <small>{{ draft.providers.length }} 个</small>
+        </h2>
+        <div class="card providers">
+          <div class="provider-list">
             <button
               v-for="p in draft.providers"
               :key="p.id"
@@ -24,105 +63,44 @@
               type="button"
               @click="selectedProviderId = p.id"
             >
-              <span class="provider-row__head">
-                <strong>{{ p.name || "未命名供应商" }}</strong>
-                <span
-                  v-if="testResults[p.id]"
-                  class="status-dot"
-                  :class="testResults[p.id].ok ? 'status-dot--ok' : 'status-dot--err'"
-                  :title="testResults[p.id].ok ? '上次测试：成功' : `上次测试：${testResults[p.id].message}`"
-                />
-              </span>
-              <span class="provider-row__meta">
-                <span class="tag">{{ p.type }}</span>
-                <span v-if="isProviderReferenced(p.id)" class="tag tag--info">使用中</span>
-              </span>
+              <span
+                class="status-dot"
+                :class="testResults[p.id] ? (testResults[p.id].ok ? 'status-dot--ok' : 'status-dot--err') : ''"
+                :title="testResults[p.id] ? (testResults[p.id].ok ? '上次测试：成功' : `上次测试：${testResults[p.id].message}`) : '未测试'"
+              />
+              <span class="provider-row__name">{{ p.name || "未命名供应商" }}</span>
+              <span class="provider-row__type">{{ p.type }}</span>
+            </button>
+            <button class="provider-add" type="button" @click="addProvider">
+              <Plus :size="13" />
+              <span>添加供应商</span>
             </button>
           </div>
 
-          <button class="btn btn--ghost provider-add" type="button" @click="addProvider">
-            <Plus :size="14" />
-            <span>添加供应商</span>
-          </button>
+          <div class="provider-editor-pane">
+            <ProviderEditor
+              v-if="selectedProvider"
+              :provider="selectedProvider"
+              :id-locked="isProviderReferenced(selectedProvider.id)"
+              :test-result="testResults[selectedProvider.id] ?? null"
+              :testing="loading.test"
+              :revealed="!!apiKeyRevealed[selectedProvider.id]"
+              @test="testProvider($event)"
+              @duplicate="duplicateProvider($event)"
+              @remove="removeProvider($event)"
+              @toggle-reveal="toggleApiKeyReveal(selectedProvider.id)"
+            />
+            <div v-else class="empty-state">选择或添加一个供应商以编辑</div>
+          </div>
         </div>
-
-        <div class="panel panel--editor">
-          <ProviderEditor
-            v-if="selectedProvider"
-            :provider="selectedProvider"
-            :id-locked="isProviderReferenced(selectedProvider.id)"
-            :test-result="testResults[selectedProvider.id] ?? null"
-            :testing="loading.test"
-            :revealed="!!apiKeyRevealed[selectedProvider.id]"
-            @test="testProvider($event)"
-            @duplicate="duplicateProvider($event)"
-            @remove="removeProvider($event)"
-            @toggle-reveal="toggleApiKeyReveal(selectedProvider.id)"
-          />
-          <div v-else class="empty-state">选择或添加一个供应商以编辑</div>
-        </div>
-      </div>
-
-      <div class="panel panel--slots">
-        <div class="panel-header">
-          <h2 class="panel-title">模型槽位</h2>
-          <span class="hint">仅显示已启用的模块；模型名可手填或从拉取的列表中选择</span>
-        </div>
-
-        <div v-if="modelSlots.length === 0" class="empty-state empty-state--sm">没有需要配置的模型槽位</div>
-        <div v-else class="slots-grid">
-          <ModelSlotEditor
-            v-for="slot in modelSlots"
-            :key="slot.path"
-            :path="slot.path"
-            :label="slot.label"
-            :description="slot.description"
-            :kind="slot.kind"
-            :model-value="slot.get()"
-            :providers="draft.providers"
-            :model-options="modelOptionsByProvider[slot.get().providerId] ?? []"
-            :loading-models="loading.listModels"
-            :removable="!!slot.remove"
-            @update:model-value="slot.set($event)"
-            @list-models="loadModels($event)"
-            @remove="slot.remove?.()"
-          />
-        </div>
-
-        <div class="group-add">
-          <input
-            v-model.trim="newGroupId"
-            class="form-input mono"
-            type="text"
-            placeholder="群 ID，形如 qq:&lt;32 位十六进制&gt;"
-            @keydown.enter="addGroup"
-          />
-          <button class="btn btn--ghost" type="button" :disabled="!newGroupId" @click="addGroup">
-            <Plus :size="14" />
-            <span>给群单独指定 agent 模型</span>
-          </button>
-        </div>
-      </div>
-
-      <div class="save-bar">
-        <span class="status-badge" :class="`status-badge--${saveState}`">{{ saveStateText }}</span>
-        <span class="save-bar__spacer" />
-        <button class="btn btn--ghost" type="button" :disabled="!isDirty || loading.save || loading.refresh" @click="refresh">
-          <RotateCcw :size="14" />
-          <span>放弃改动</span>
-        </button>
-        <button class="btn btn--primary" type="button" :disabled="!isDirty || loading.save" @click="save">
-          <Save :size="14" />
-          <span>{{ loading.save ? "保存中" : "保存配置" }}</span>
-        </button>
-      </div>
+      </section>
     </template>
   </div>
 </template>
 
 <script lang="ts" setup>
-import { ref } from "vue";
-import { Plus, RotateCcw, Save } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import { Plus } from "lucide-vue-next";
 import ProviderEditor from "./provider-editor.vue";
 import ModelSlotEditor from "./model-slot-editor.vue";
 import type { ConfigStudioController } from "../composables/use-config-studio";
@@ -135,17 +113,12 @@ const {
   draft,
   selectedProviderId,
   selectedProvider,
-  saveState,
-  saveStateText,
   loading,
-  isDirty,
   modelOptionsByProvider,
   testResults,
   apiKeyRevealed,
   modelSlots,
   isProviderReferenced,
-  refresh,
-  save,
   addProvider,
   removeProvider,
   duplicateProvider,
@@ -154,6 +127,27 @@ const {
   addGroupModel,
   toggleApiKeyReveal,
 } = props.studio;
+
+const GROUP_PATH_PREFIX = "agent.groupModels.";
+
+type Slot = (typeof modelSlots.value)[number];
+
+const baseSlots = computed(() => modelSlots.value.filter((s) => !s.remove));
+const groupSlots = computed(() => modelSlots.value.filter((s) => s.remove));
+
+function slotProps(slot: Slot) {
+  const value = slot.get();
+  return {
+    path: slot.path,
+    label: slot.label,
+    description: slot.description,
+    kind: slot.kind,
+    modelValue: value,
+    providers: draft.value!.providers,
+    modelOptions: modelOptionsByProvider[value.providerId] ?? [],
+    loadingModels: loading.listModels,
+  };
+}
 
 const newGroupId = ref("");
 
@@ -167,207 +161,148 @@ function addGroup() {
 .config-pane {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  min-height: 0;
-  flex: 1;
+  gap: 28px;
+  max-width: 1180px;
 }
 
 .warn-banner {
   padding: 10px 14px;
   border-radius: var(--radius-md);
-  background: rgba(245, 158, 11, 0.12);
-  color: #92400e;
+  background: var(--c-warning-soft);
+  color: var(--c-warning);
   font-size: 13px;
-  line-height: 1.5;
-  border: 1px solid rgba(245, 158, 11, 0.25);
 }
 
-.providers-grid {
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
-  gap: 16px;
-}
-
-.panel {
-  background: var(--c-bg);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-lg);
-  padding: 16px;
+.section-title {
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: baseline;
   gap: 8px;
-}
-
-.panel-title {
-  margin: 0;
-  font-size: 14px;
+  margin: 0 0 10px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--c-text);
 }
 
-.hint {
+.section-title small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--c-text-4);
+}
+
+.card {
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-light);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.group-heading {
+  padding: 6px 16px;
+  border-top: 1px solid var(--c-border-light);
+  border-bottom: 1px solid var(--c-border-light);
+  background: var(--c-bg-soft);
   font-size: 11px;
   color: var(--c-text-4);
 }
 
-.badge {
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: var(--c-bg-muted);
-  color: var(--c-text-3);
-  font-size: 12px;
-  font-weight: 500;
+.group-add {
+  display: flex;
+  gap: 8px;
+  padding: 10px 16px 10px 30px;
+  border-top: 1px solid var(--c-border-light);
 }
 
-.tag {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--c-accent-soft);
-  color: var(--c-accent-active);
-  font-size: 11px;
-  font-weight: 600;
+.group-add .form-input {
+  max-width: 420px;
 }
 
-.tag--info {
-  background: rgba(245, 158, 11, 0.12);
-  color: #b45309;
+.providers {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
 }
 
 .provider-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  max-height: 320px;
-  overflow-y: auto;
+  gap: 1px;
+  padding: 6px;
+  border-right: 1px solid var(--c-border-light);
 }
 
-.provider-row {
+.provider-row,
+.provider-add {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  text-align: left;
-  padding: 8px 10px;
+  padding: 7px 10px;
+  border: none;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
   background: transparent;
+  color: var(--c-text);
   font: inherit;
+  text-align: left;
   cursor: pointer;
-  transition: background 150ms, border-color 150ms;
+  transition: background 150ms;
 }
 
-.provider-row:hover {
+.provider-row:hover,
+.provider-add:hover {
   background: var(--c-bg-muted);
 }
 
-.provider-row--active {
+.provider-row--active,
+.provider-row--active:hover {
   background: var(--c-accent-soft);
-  border-color: var(--c-accent-muted);
 }
 
-.provider-row__head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--c-text);
+.provider-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.provider-row__meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 4px;
+.provider-row__type {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-text-4);
+}
+
+.provider-add {
+  color: var(--c-text-2);
+  font-size: 12px;
 }
 
 .status-dot {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
-  margin-left: auto;
+  background: transparent;
 }
 
 .status-dot--ok {
-  background: #10b981;
+  background: var(--c-success);
 }
 
 .status-dot--err {
   background: var(--c-danger);
 }
 
-.provider-add {
-  align-self: flex-start;
+.provider-editor-pane {
+  min-width: 0;
+  padding: 16px 20px;
 }
 
-.slots-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.group-add {
-  display: flex;
-  gap: 8px;
-}
-
-.group-add .form-input {
-  flex: 1;
-}
-
-.status-badge {
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 12px;
-  font-weight: 500;
-  background: var(--c-bg-muted);
-  color: var(--c-text-3);
-}
-
-.status-badge--dirty {
-  background: rgba(245, 158, 11, 0.1);
-  color: #b45309;
-}
-
-.status-badge--saving {
-  background: var(--c-accent-soft);
-  color: var(--c-accent-hover);
-}
-
-.status-badge--failed {
-  background: var(--c-danger-soft);
-  color: var(--c-danger);
-}
-
-.save-bar {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background: var(--c-bg);
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-}
-
-.save-bar__spacer {
-  flex: 1;
-}
-
-@media (max-width: 1100px) {
-  .providers-grid {
+@media (max-width: 900px) {
+  .providers {
     grid-template-columns: 1fr;
   }
-  .slots-grid {
-    grid-template-columns: 1fr;
+  .provider-list {
+    border-right: none;
+    border-bottom: 1px solid var(--c-border-light);
   }
 }
 </style>

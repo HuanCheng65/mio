@@ -1,12 +1,6 @@
 <template>
   <aside class="sidebar">
-    <div class="sidebar-brand">
-      <span class="sidebar-logo">M</span>
-      <div>
-        <div class="sidebar-title">Mio</div>
-        <div class="sidebar-subtitle">控制台</div>
-      </div>
-    </div>
+    <div class="sidebar-brand">MIO</div>
 
     <nav class="sidebar-nav" aria-label="Mio Console Navigation">
       <button
@@ -17,7 +11,7 @@
         type="button"
         @click="$emit('select', section.id)"
       >
-        <component :is="section.icon" :size="16" />
+        <component :is="section.icon" :size="15" />
         <span>{{ section.label }}</span>
       </button>
     </nav>
@@ -41,52 +35,24 @@ defineEmits<{
 .sidebar {
   display: flex;
   flex-direction: column;
+  padding: 14px 8px;
   background: var(--c-bg);
-  border-right: 1px solid var(--c-border);
+  border-right: 1px solid var(--c-border-light);
   overflow-y: auto;
 }
 
 .sidebar-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px;
-  border-bottom: 1px solid var(--c-border);
-}
-
-.sidebar-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-md);
-  background: var(--c-accent);
-  color: #fff;
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.sidebar-title {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--c-text);
-}
-
-.sidebar-subtitle {
+  padding: 0 10px 10px;
   font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
   color: var(--c-text-4);
-  margin-top: 1px;
 }
 
 .sidebar-nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 8px;
 }
 
 .nav-item {
@@ -94,14 +60,13 @@ defineEmits<{
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 7px 10px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--c-text-2);
   font: inherit;
   font-size: 13px;
-  font-weight: 500;
   text-align: left;
   cursor: pointer;
   transition: background 150ms, color 150ms;
@@ -112,20 +77,22 @@ defineEmits<{
   color: var(--c-text);
 }
 
-.nav-item--active {
-  background: var(--c-accent-soft);
-  color: var(--c-accent-active);
-  font-weight: 600;
-}
-
+.nav-item--active,
 .nav-item--active:hover {
   background: var(--c-accent-soft);
+  color: var(--c-accent);
+  font-weight: 500;
 }
 
 @media (max-width: 960px) {
   .sidebar {
+    flex-direction: row;
+    align-items: center;
     border-right: none;
-    border-bottom: 1px solid var(--c-border);
+    border-bottom: 1px solid var(--c-border-light);
+  }
+  .sidebar-brand {
+    padding: 0 10px;
   }
   .sidebar-nav {
     flex-direction: row;

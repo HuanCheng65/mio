@@ -9,7 +9,7 @@
             <Sparkles :size="14" />
             <span>{{ distilling ? "蒸馏中..." : "手动触发蒸馏" }}</span>
           </button>
-          <button class="btn btn--ghost" type="button" @click="flushMemory" :disabled="!memoryEnabled || flushing">
+          <button class="btn" type="button" @click="flushMemory" :disabled="!memoryEnabled || flushing">
             <DatabaseZap :size="14" />
             <span>{{ flushing ? "写入中..." : "写入 Working Memory" }}</span>
           </button>
@@ -25,7 +25,7 @@
         <h2 class="tool-card__title">数据库维护</h2>
         <p class="tool-card__desc">清理和修复数据库中的历史数据。</p>
         <div class="tool-actions">
-          <button class="btn btn--ghost" type="button" @click="migrateParticipants" :disabled="migrating">
+          <button class="btn" type="button" @click="migrateParticipants" :disabled="migrating">
             <Wrench :size="14" />
             <span>{{ migrating ? "迁移中..." : "修复 Participants 字段" }}</span>
           </button>
@@ -76,7 +76,7 @@ const {
 
 .tool-card {
   background: var(--c-bg);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-border-light);
   border-radius: var(--radius-lg);
   padding: 16px;
 }
@@ -117,7 +117,7 @@ const {
 
 .result-box--warning {
   background: var(--c-warning-soft);
-  border-color: rgba(245, 158, 11, 0.15);
+  border-color: color-mix(in srgb, var(--c-warning) 25%, transparent);
 }
 
 .result-box h3 {

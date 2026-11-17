@@ -52,16 +52,16 @@
           </div>
 
           <div class="editor-toolbar">
-            <button class="btn btn--ghost" type="button" @click="duplicateSelected" :disabled="busyAction || !selectedPersonaId">
+            <button class="btn" type="button" @click="duplicateSelected" :disabled="busyAction || !selectedPersonaId">
               <Copy :size="14" />
               <span>复制</span>
             </button>
-            <button class="btn btn--ghost" type="button" @click="openRenameDialog" :disabled="busyAction || !selectedPersonaId">
+            <button class="btn" type="button" @click="openRenameDialog" :disabled="busyAction || !selectedPersonaId">
               <PencilLine :size="14" />
               <span>重命名</span>
             </button>
             <button
-              class="btn btn--ghost"
+              class="btn"
               type="button"
               @click="setSelectedAsDefault"
               :disabled="busyAction || !selectedPersonaId || selectedPersona.isDefault"
@@ -138,7 +138,7 @@
                 placeholder="输入群 ID"
                 aria-label="绑定群 ID"
               />
-              <button class="btn btn--ghost" type="button" @click="bindCurrentGroup" :disabled="busyAction || !bindGroupId">
+              <button class="btn" type="button" @click="bindCurrentGroup" :disabled="busyAction || !bindGroupId">
                 绑定
               </button>
             </div>
@@ -157,7 +157,7 @@
             </ul>
           </section>
 
-          <section class="section-card section-card--danger">
+          <section class="section-card">
             <div class="section-header section-header--danger">
               <ShieldAlert :size="14" />
               <h3>危险操作</h3>
@@ -199,7 +199,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn--ghost" type="button" @click="closeCreateDialog">取消</button>
+          <button class="btn" type="button" @click="closeCreateDialog">取消</button>
           <button class="btn btn--primary" type="button" @click="createPersona" :disabled="busyAction || !createDraft.name">
             {{ loading.create ? "创建中" : "创建" }}
           </button>
@@ -222,7 +222,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn--ghost" type="button" @click="closeRenameDialog">取消</button>
+          <button class="btn" type="button" @click="closeRenameDialog">取消</button>
           <button class="btn btn--primary" type="button" @click="renameSelectedPersona" :disabled="busyAction || !renameDraft">
             {{ loading.rename ? "保存中" : "确认" }}
           </button>
@@ -242,7 +242,7 @@
           <p class="modal-desc">切换人设会丢失当前未保存的编辑。</p>
         </div>
         <div class="modal-footer">
-          <button class="btn btn--ghost" type="button" @click="cancelPendingSelection">继续编辑</button>
+          <button class="btn" type="button" @click="cancelPendingSelection">继续编辑</button>
           <button class="btn btn--danger" type="button" @click="confirmPendingSelection">放弃并切换</button>
         </div>
       </section>
@@ -263,7 +263,7 @@
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn--ghost" type="button" @click="showDeleteDialog = false">取消</button>
+          <button class="btn" type="button" @click="showDeleteDialog = false">取消</button>
           <button class="btn btn--danger" type="button" @click="deleteSelectedPersona" :disabled="busyAction">
             {{ loading.delete ? "删除中" : "确认删除" }}
           </button>
@@ -334,6 +334,7 @@ const {
 .persona-pane {
   display: flex;
   flex-direction: column;
+  height: 100%;
   min-height: 0;
   flex: 1;
 }
@@ -348,7 +349,7 @@ const {
 
 .panel {
   background: var(--c-bg);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-border-light);
   border-radius: var(--radius-lg);
   padding: 16px;
   display: flex;
@@ -402,8 +403,8 @@ const {
 }
 
 .status-badge--dirty {
-  background: rgba(245, 158, 11, 0.1);
-  color: #b45309;
+  background: var(--c-warning-soft);
+  color: var(--c-warning);
 }
 
 .status-badge--saving {
@@ -432,7 +433,7 @@ const {
   pointer-events: none;
 }
 
-.search-input {
+.search-box .search-input {
   padding-left: 30px;
 }
 
@@ -462,9 +463,9 @@ const {
   background: var(--c-bg-muted);
 }
 
-.persona-row--active {
+.persona-row--active,
+.persona-row--active:hover {
   background: var(--c-accent-soft);
-  border-color: var(--c-accent-muted);
 }
 
 .persona-row__head {
@@ -524,7 +525,7 @@ const {
   flex-direction: column;
 }
 
-.editor-textarea {
+.editor-area .editor-textarea {
   flex: 1;
   min-height: 200px;
   resize: none;
@@ -556,19 +557,10 @@ const {
   margin: 0;
 }
 
-.meta-item {
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--c-bg-soft);
-}
-
 .meta-item dt {
   font-size: 11px;
-  font-weight: 500;
   color: var(--c-text-4);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
 .meta-item dd {
@@ -584,15 +576,8 @@ const {
 }
 
 .section-card {
-  padding: 12px;
-  border-radius: var(--radius-md);
-  background: var(--c-bg-soft);
-  border: 1px solid var(--c-border-light);
-}
-
-.section-card--danger {
-  background: var(--c-danger-soft);
-  border-color: rgba(225, 29, 72, 0.15);
+  padding-top: 12px;
+  border-top: 1px solid var(--c-border-light);
 }
 
 .section-header {
@@ -640,10 +625,15 @@ const {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
-  background: var(--c-bg);
+  padding: 2px 0;
   font-size: 12px;
+}
+
+.group-item .mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Modals */
@@ -662,9 +652,9 @@ const {
 .modal-box {
   width: min(600px, 100%);
   background: var(--c-bg);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-border-light);
   border-radius: var(--radius-xl);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
   overflow: hidden;
 }
 
@@ -678,7 +668,7 @@ const {
   align-items: center;
   gap: 12px;
   padding: 14px 20px;
-  border-bottom: 1px solid var(--c-border);
+  border-bottom: 1px solid var(--c-border-light);
 }
 
 .modal-header h2 {
@@ -717,8 +707,14 @@ const {
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 20px;
-  border-top: 1px solid var(--c-border);
+  border-top: 1px solid var(--c-border-light);
   background: var(--c-bg-soft);
+}
+
+.modal-footer .btn--danger,
+.modal-footer .btn--danger:hover:not(:disabled) {
+  background: var(--c-danger);
+  color: #fff;
 }
 
 .impact-tags {
@@ -733,7 +729,7 @@ const {
   border-radius: 4px;
   background: var(--c-bg);
   color: var(--c-danger);
-  border: 1px solid rgba(225, 29, 72, 0.15);
+  border: 1px solid color-mix(in srgb, var(--c-danger) 25%, transparent);
   font-family: var(--font-mono);
   font-size: 12px;
 }

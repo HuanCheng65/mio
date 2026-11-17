@@ -1,77 +1,60 @@
 <template>
   <div class="provider-editor">
-    <div class="panel-header">
-      <h2 class="panel-title">{{ provider.name || "未命名供应商" }}</h2>
-      <span v-if="idLocked" class="tag tag--info">使用中</span>
+    <div class="editor-head">
+      <h3 class="editor-title">{{ provider.name || "未命名供应商" }}</h3>
+      <span v-if="idLocked" class="tag">使用中</span>
     </div>
 
-    <div class="form-grid">
-      <div class="form-group">
-        <span class="form-label">显示名称</span>
-        <input
-          v-model.trim="provider.name"
-          class="form-input"
-          type="text"
-          placeholder="例如：DeepSeek 主线"
-        />
-      </div>
+    <div class="form">
+      <span class="form-key">名称</span>
+      <input v-model.trim="provider.name" class="form-input" type="text" placeholder="例如：DeepSeek 主线" />
 
-      <div class="form-group">
-        <span class="form-label">类型</span>
+      <span class="form-key">类型</span>
+      <div class="pair">
         <select v-model="provider.type" class="form-input">
           <option value="openai">OpenAI 兼容</option>
           <option value="gemini">Google Gemini</option>
           <option value="anthropic">Anthropic（仅 agent）</option>
         </select>
-      </div>
-
-      <div v-if="provider.type === 'openai'" class="form-group">
-        <span class="form-label">方言</span>
-        <select v-model="provider.dialect" class="form-input">
-          <option value="openai">OpenAI 官方 (reasoning_effort)</option>
-          <option value="openrouter">OpenRouter (reasoning_effort)</option>
-          <option value="qwen">Qwen / DashScope (enable_thinking)</option>
-          <option value="deepseek">DeepSeek (thinking + reasoning_effort)</option>
-          <option value="siliconflow">SiliconFlow (thinking_budget)</option>
-          <option value="custom">其它（仅走 extraBody）</option>
-        </select>
-        <span class="form-hint">控制推理字段如何翻译到具体协议；不在列表里的请用"其它"并手填 extraBody</span>
-      </div>
-
-      <div class="form-group form-group--wide">
-        <span class="form-label">API Key</span>
-        <div class="key-row">
-          <input
-            v-model.trim="provider.apiKey"
-            class="form-input mono"
-            :type="revealed ? 'text' : 'password'"
-            placeholder="sk-..."
-            autocomplete="off"
-            spellcheck="false"
-          />
-          <button
-            class="btn btn--ghost"
-            type="button"
-            :title="revealed ? '隐藏' : '显示'"
-            @click="$emit('toggle-reveal')"
+        <template v-if="provider.type === 'openai'">
+          <span class="form-key">方言</span>
+          <select
+            v-model="provider.dialect"
+            class="form-input"
+            title="控制推理字段如何翻译到具体协议；不在列表里的请用“其它”并手填 extraBody"
           >
-            <component :is="revealed ? EyeOff : Eye" :size="14" />
-          </button>
-        </div>
+            <option value="openai">OpenAI 官方 (reasoning_effort)</option>
+            <option value="openrouter">OpenRouter (reasoning_effort)</option>
+            <option value="qwen">Qwen / DashScope (enable_thinking)</option>
+            <option value="deepseek">DeepSeek (thinking + reasoning_effort)</option>
+            <option value="siliconflow">SiliconFlow (thinking_budget)</option>
+            <option value="custom">其它（仅走 extraBody）</option>
+          </select>
+        </template>
       </div>
 
-      <div v-if="provider.type === 'openai'" class="form-group form-group--wide">
-        <span class="form-label">Base URL</span>
+      <span class="form-key">API Key</span>
+      <div class="key-row">
         <input
-          v-model.trim="provider.baseUrl"
+          v-model.trim="provider.apiKey"
           class="form-input mono"
-          type="text"
-          placeholder="https://api.deepseek.com"
+          :type="revealed ? 'text' : 'password'"
+          placeholder="sk-..."
+          autocomplete="off"
+          spellcheck="false"
         />
+        <button class="btn btn--icon" type="button" :title="revealed ? '隐藏' : '显示'" @click="$emit('toggle-reveal')">
+          <component :is="revealed ? EyeOff : Eye" :size="14" />
+        </button>
       </div>
 
-      <div v-if="provider.type === 'anthropic'" class="form-group form-group--wide">
-        <span class="form-label">HTTP 代理</span>
+      <template v-if="provider.type === 'openai'">
+        <span class="form-key">Base URL</span>
+        <input v-model.trim="provider.baseUrl" class="form-input mono" type="text" placeholder="https://api.deepseek.com" />
+      </template>
+
+      <template v-if="provider.type === 'anthropic'">
+        <span class="form-key">HTTP 代理</span>
         <input
           :value="provider.proxyUrl ?? ''"
           class="form-input mono"
@@ -80,79 +63,80 @@
           @input="setProxyUrl"
         />
         <span class="form-hint">服务器直连 Anthropic 会被按地区拒绝（403），填本机代理地址；留空表示直连</span>
-      </div>
+      </template>
 
-      <div v-if="provider.type !== 'gemini'" class="form-group">
-        <span class="form-label">agent 发图方式</span>
-        <select :value="provider.images?.transport ?? ''" class="form-input" @change="setTransport">
-          <option value="">未配置（agent 不能用这个供应商）</option>
-          <option v-if="provider.type === 'openai'" value="deepseek-files">DeepSeek Files API（每张图只传一次）</option>
-          <option v-if="provider.type === 'anthropic'" value="anthropic-files">Anthropic Files API（每张图只传一次）</option>
-          <option value="inline">内联 base64（每步随请求上传）</option>
-        </select>
-      </div>
+      <template v-if="provider.type !== 'gemini'">
+        <span class="form-key">agent 发图</span>
+        <div class="pair">
+          <select :value="provider.images?.transport ?? ''" class="form-input" @change="setTransport">
+            <option value="">未配置（agent 不能用这个供应商）</option>
+            <option v-if="provider.type === 'openai'" value="deepseek-files">DeepSeek Files API（每张图只传一次）</option>
+            <option v-if="provider.type === 'anthropic'" value="anthropic-files">Anthropic Files API（每张图只传一次）</option>
+            <option value="inline">内联 base64（每步随请求上传）</option>
+          </select>
+          <template v-if="provider.images?.transport">
+            <span class="form-key">缩图像素</span>
+            <input v-model.number="provider.images.maxPixels" class="form-input mono" type="number" placeholder="1690000" />
+          </template>
+        </div>
+        <span v-if="provider.images?.transport" class="form-hint">
+          缩图像素填供应商服务端自己的缩放目标：DeepSeek 是 1300×1300 = 1690000；Claude 4.7 及以后最多约 3750000（长边 2576），填小些更省
+        </span>
+      </template>
 
-      <div v-if="provider.type !== 'gemini' && provider.images?.transport" class="form-group">
-        <span class="form-label">缩图目标（总像素）</span>
-        <input v-model.number="provider.images.maxPixels" class="form-input mono" type="number" placeholder="1690000" />
-        <span class="form-hint">填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300 = 1690000；Claude 4.7 及以后最多约 3750000（长边 2576），填小些更省</span>
-      </div>
-
-      <div v-if="provider.type !== 'gemini' && provider.images?.transport === 'inline'" class="form-group">
-        <span class="form-label">内联图片预算（MiB）</span>
-        <input v-model.number="provider.images.inlineBudgetMiB" class="form-input mono" type="number" placeholder="32" />
+      <template v-if="provider.type !== 'gemini' && provider.images?.transport === 'inline'">
+        <span class="form-key">内联预算 MiB</span>
+        <input v-model.number="provider.images.inlineBudgetMiB" class="form-input mono narrow" type="number" placeholder="32" />
         <span class="form-hint">一段 log 的图片超过这个量就睡前整理，要低于供应商的请求体上限（Claude 是 128 MB，base64 再大三分之一）</span>
-      </div>
+      </template>
     </div>
 
     <details v-if="provider.type === 'openai'" class="advanced">
       <summary class="advanced-summary">
-        <ChevronRight :size="14" class="advanced-chevron" />
-        <span>高级</span>
-        <span class="advanced-hint">附加请求头 / 请求体</span>
+        <ChevronRight :size="13" class="advanced-chevron" />
+        <span>高级：附加请求头 / 请求体</span>
       </summary>
-      <div class="advanced-body">
-        <div class="form-group">
-          <span class="form-label">附加 Headers</span>
-          <textarea
-            v-model="extraHeadersText"
-            class="form-input mono advanced-textarea"
-            spellcheck="false"
-            placeholder='{ "X-Foo": "bar" }'
-            @blur="commitExtraHeaders"
-          />
-          <span v-if="extraHeadersError" class="advanced-error">{{ extraHeadersError }}</span>
-        </div>
+      <div class="form advanced-body">
+        <span class="form-key">Headers</span>
+        <textarea
+          v-model="extraHeadersText"
+          class="form-input mono advanced-textarea"
+          spellcheck="false"
+          placeholder='{ "X-Foo": "bar" }'
+          @blur="commitExtraHeaders"
+        />
+        <span v-if="extraHeadersError" class="form-hint advanced-error">{{ extraHeadersError }}</span>
 
-        <div class="form-group">
-          <span class="form-label">附加请求体</span>
-          <textarea
-            v-model="extraBodyText"
-            class="form-input mono advanced-textarea"
-            spellcheck="false"
-            placeholder='{ "top_k": 40 }'
-            @blur="commitExtraBody"
-          />
-          <span v-if="extraBodyError" class="advanced-error">{{ extraBodyError }}</span>
-          <span class="form-hint">每次请求都会合入；模型槽位的 extraBody 会覆盖此处同名键</span>
-        </div>
+        <span class="form-key">请求体</span>
+        <textarea
+          v-model="extraBodyText"
+          class="form-input mono advanced-textarea"
+          spellcheck="false"
+          placeholder='{ "top_k": 40 }'
+          @blur="commitExtraBody"
+        />
+        <span v-if="extraBodyError" class="form-hint advanced-error">{{ extraBodyError }}</span>
+        <span class="form-hint">每次请求都会合入；模型槽位的 extraBody 会覆盖此处同名键</span>
       </div>
     </details>
 
     <div class="editor-toolbar">
-      <button
-        class="btn btn--ghost"
-        type="button"
-        :disabled="testing || !provider.apiKey"
-        @click="$emit('test', provider)"
-      >
-        <Plug :size="14" />
+      <button class="btn" type="button" :disabled="testing || !provider.apiKey" @click="$emit('test', provider)">
+        <Plug :size="13" />
         <span>{{ testing ? "测试中" : "测试连接" }}</span>
       </button>
-      <button class="btn btn--ghost" type="button" @click="$emit('duplicate', provider.id)">
-        <Copy :size="14" />
+      <button class="btn" type="button" @click="$emit('duplicate', provider.id)">
+        <Copy :size="13" />
         <span>克隆</span>
       </button>
+      <span
+        v-if="testResult"
+        class="test-result"
+        :class="testResult.ok ? 'test-result--ok' : 'test-result--err'"
+        :title="testResult.ok ? '' : testResult.message"
+      >
+        {{ testResult.ok ? `✓ 连接成功${testResult.latencyMs ? ` · ${testResult.latencyMs}ms` : ""}` : `✗ ${testResult.message}` }}
+      </span>
       <span class="toolbar-spacer" />
       <button
         class="btn btn--danger"
@@ -161,14 +145,9 @@
         :title="idLocked ? '已被模型槽位引用，请先把槽位指向其他供应商' : ''"
         @click="$emit('remove', provider.id)"
       >
-        <Trash2 :size="14" />
+        <Trash2 :size="13" />
         <span>删除</span>
       </button>
-    </div>
-
-    <div v-if="testResult" class="test-result" :class="testResult.ok ? 'test-result--ok' : 'test-result--err'">
-      <span v-if="testResult.ok">✓ 连接成功{{ testResult.latencyMs ? ` · ${testResult.latencyMs}ms` : "" }}</span>
-      <span v-else>✗ {{ testResult.message }}</span>
     </div>
   </div>
 </template>
@@ -278,19 +257,16 @@ function commitExtraBody() {
 .provider-editor {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  height: 100%;
-  min-height: 0;
+  gap: 16px;
 }
 
-.panel-header {
+.editor-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
 }
 
-.panel-title {
+.editor-title {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
@@ -298,43 +274,44 @@ function commitExtraBody() {
 }
 
 .tag {
-  padding: 1px 6px;
+  padding: 0 6px;
   border-radius: 4px;
   background: var(--c-accent-soft);
-  color: var(--c-accent-active);
+  color: var(--c-accent);
   font-size: 11px;
-  font-weight: 600;
 }
 
-.tag--info {
-  background: rgba(245, 158, 11, 0.12);
-  color: #b45309;
-}
-
-.form-grid {
+.form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 10px 14px;
+  align-items: center;
 }
 
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.form-key {
+  font-size: 12px;
+  color: var(--c-text-2);
+  white-space: nowrap;
 }
 
-.form-group--wide {
+.form > .form-hint {
+  grid-column: 2;
+  margin-top: -4px;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.pair > :only-child {
   grid-column: 1 / -1;
 }
 
-.form-hint {
-  font-size: 11px;
-  color: var(--c-text-4);
-  line-height: 1.4;
-}
-
-.mono {
-  font-family: var(--font-mono);
+.narrow {
+  max-width: 160px;
 }
 
 .key-row {
@@ -342,26 +319,15 @@ function commitExtraBody() {
   gap: 6px;
 }
 
-.key-row .form-input {
-  flex: 1;
-}
-
-.advanced {
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-md);
-  background: var(--c-bg-soft);
-}
-
 .advanced-summary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 4px;
   cursor: pointer;
   user-select: none;
   font-size: 12px;
-  font-weight: 500;
   color: var(--c-text-2);
+  list-style: none;
 }
 
 .advanced-summary::-webkit-details-marker {
@@ -370,42 +336,36 @@ function commitExtraBody() {
 
 .advanced-chevron {
   transition: transform 150ms;
-  color: var(--c-text-4);
 }
 
 .advanced[open] .advanced-chevron {
   transform: rotate(90deg);
 }
 
-.advanced-hint {
-  margin-left: auto;
-  color: var(--c-text-4);
-  font-size: 11px;
-  font-weight: 400;
+.advanced-body {
+  margin-top: 10px;
+  align-items: start;
 }
 
-.advanced-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 0 12px 12px;
+.advanced-body .form-key {
+  padding-top: 8px;
 }
 
 .advanced-textarea {
-  min-height: 80px;
-  resize: vertical;
-  font-size: 12px;
+  min-height: 72px;
 }
 
 .advanced-error {
-  font-size: 11px;
   color: var(--c-danger);
 }
 
 .editor-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--c-border-light);
 }
 
 .toolbar-spacer {
@@ -413,19 +373,19 @@ function commitExtraBody() {
 }
 
 .test-result {
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
+  min-width: 0;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
-  line-height: 1.5;
 }
 
 .test-result--ok {
-  background: var(--c-accent-soft);
-  color: var(--c-accent-active);
+  color: var(--c-success);
 }
 
 .test-result--err {
-  background: var(--c-danger-soft);
   color: var(--c-danger);
 }
 </style>

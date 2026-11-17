@@ -266,7 +266,7 @@ const emptyHint = computed(() => {
   padding: 14px 16px;
   border-radius: var(--radius-lg);
   background: var(--c-bg);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-border-light);
 }
 
 .kpi--accent {
@@ -302,7 +302,7 @@ const emptyHint = computed(() => {
 
 .breakdown-card {
   background: var(--c-bg);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-border-light);
   border-radius: var(--radius-lg);
   padding: 16px;
 }
@@ -371,7 +371,7 @@ const emptyHint = computed(() => {
 /* Detail table */
 .detail-card {
   background: var(--c-bg);
-  border: 1px solid var(--c-border);
+  border: 1px solid var(--c-border-light);
   border-radius: var(--radius-lg);
   padding: 16px;
 }
@@ -422,7 +422,7 @@ const emptyHint = computed(() => {
 }
 
 .date-break td {
-  border-top: 2px solid var(--c-border);
+  border-top: 2px solid var(--c-border-light);
 }
 
 .col-label { text-align: left; }

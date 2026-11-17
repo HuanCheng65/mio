@@ -1,67 +1,58 @@
 <template>
-  <div class="slot-card">
-    <div class="slot-header">
-      <div class="slot-title-block">
-        <h3 class="slot-title">{{ label }}</h3>
-        <span class="slot-desc">{{ description }}</span>
-      </div>
-      <span class="slot-path mono">{{ path }}</span>
-      <button v-if="removable" class="btn btn--subtle" type="button" :title="`删除 ${label}`" @click="$emit('remove')">
-        <Trash2 :size="12" />
-      </button>
-    </div>
+  <div class="slot" :class="{ 'slot--open': open, 'slot--nested': !!sublabel }">
+    <button class="slot-row" type="button" :title="`${description}\n${path}`" :aria-expanded="open" @click="open = !open">
+      <span class="slot-label">
+        <span class="slot-name">{{ label }}</span>
+        <span v-if="sublabel" class="slot-sub">{{ sublabel }}</span>
+      </span>
+      <span class="slot-model">
+        <span v-if="problem" class="slot-problem">● {{ problem }}</span>
+        <span v-else class="slot-model-name">{{ modelValue.modelName }}</span>
+        <span v-if="selectedProvider" class="slot-provider">{{ selectedProvider.name || "未命名供应商" }}</span>
+      </span>
+      <span class="slot-summary">{{ summary }}</span>
+      <ChevronRight :size="14" class="slot-chevron" />
+    </button>
 
-    <div class="form-group">
-      <span class="form-label">供应商</span>
-      <div v-if="providers.length === 0" class="provider-empty">先在上方添加一个供应商</div>
-      <div v-else class="provider-chips" role="radiogroup" :aria-label="`${label} 供应商`">
+    <div v-if="open" class="slot-detail">
+      <div class="detail-main">
+        <label class="field">
+          <span class="form-label">供应商</span>
+          <select :value="modelValue.providerId" class="form-input" @change="updateProvider(($event.target as HTMLSelectElement).value)">
+            <option v-if="!modelValue.providerId" value="" disabled>选择供应商</option>
+            <option v-for="p in providers" :key="p.id" :value="p.id">
+              {{ p.name || "未命名供应商" }} · {{ p.type === "openai" ? (p.dialect ?? "openai") : p.type }}
+            </option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="form-label">模型名</span>
+          <input
+            :value="modelValue.modelName"
+            class="form-input mono"
+            type="text"
+            :list="datalistId"
+            :disabled="!modelValue.providerId"
+            placeholder="model-name"
+            @input="updateField('modelName', ($event.target as HTMLInputElement).value)"
+          />
+          <datalist :id="datalistId">
+            <option v-for="name in modelOptions" :key="name" :value="name" />
+          </datalist>
+        </label>
         <button
-          v-for="p in providers"
-          :key="p.id"
+          class="btn"
           type="button"
-          role="radio"
-          :aria-checked="modelValue.providerId === p.id"
-          class="provider-chip"
-          :class="{ 'provider-chip--active': modelValue.providerId === p.id }"
-          @click="updateProvider(p.id)"
+          :disabled="!modelValue.providerId || loadingModels"
+          @click="$emit('list-models', modelValue.providerId)"
         >
-          <Check v-if="modelValue.providerId === p.id" :size="12" class="chip-check" />
-          <span class="chip-name">{{ p.name || "未命名供应商" }}</span>
-          <span class="chip-type">{{ p.type === 'openai' ? (p.dialect ?? 'openai') : p.type }}</span>
+          <RotateCw :size="13" />
+          <span>{{ loadingModels ? "拉取中" : "拉取列表" }}</span>
         </button>
       </div>
-    </div>
 
-    <div class="slot-grid">
-      <div class="form-group">
-        <span class="form-label">
-          <span>模型名称</span>
-          <button
-            class="btn btn--subtle slot-refresh"
-            type="button"
-            :disabled="!modelValue.providerId || loadingModels"
-            @click="$emit('list-models', modelValue.providerId)"
-          >
-            <RotateCw :size="11" />
-            <span>{{ loadingModels ? "拉取中" : "拉取列表" }}</span>
-          </button>
-        </span>
-        <input
-          :value="modelValue.modelName"
-          class="form-input mono"
-          type="text"
-          :list="datalistId"
-          :disabled="!modelValue.providerId"
-          placeholder="model-name"
-          @input="updateField('modelName', ($event.target as HTMLInputElement).value)"
-        />
-        <datalist :id="datalistId">
-          <option v-for="name in modelOptions" :key="name" :value="name" />
-        </datalist>
-      </div>
-
-      <template v-if="kind !== 'embedding'">
-        <div v-if="selectedProvider?.type !== 'anthropic'" class="form-group">
+      <div v-if="kind !== 'embedding'" class="detail-params">
+        <label v-if="selectedProvider?.type !== 'anthropic'" class="field">
           <span class="form-label">Temperature</span>
           <input
             :value="modelValue.temperature ?? ''"
@@ -73,9 +64,9 @@
             placeholder="默认"
             @input="updateNumber('temperature', ($event.target as HTMLInputElement).value)"
           />
-        </div>
+        </label>
 
-        <div class="form-group">
+        <label class="field">
           <span class="form-label">Max Tokens</span>
           <input
             :value="modelValue.maxTokens ?? ''"
@@ -86,9 +77,9 @@
             placeholder="默认"
             @input="updateNumber('maxTokens', ($event.target as HTMLInputElement).value)"
           />
-        </div>
+        </label>
 
-        <div v-if="kind === 'agent'" class="form-group">
+        <label v-if="kind === 'agent'" class="field">
           <span class="form-label">缓存 TTL（分钟）</span>
           <input
             :value="(modelValue as AgentModelConfig).cacheTtlMinutes ?? ''"
@@ -100,10 +91,10 @@
             @input="updateNumber('cacheTtlMinutes', ($event.target as HTMLInputElement).value)"
           />
           <span class="form-hint">空闲到快过期时睡前整理；anthropic 只能填 60</span>
-        </div>
+        </label>
 
         <template v-if="availableModes.length > 1">
-          <div class="form-group">
+          <label class="field">
             <span class="form-label">推理模式</span>
             <select
               :value="reasoningMode"
@@ -112,9 +103,9 @@
             >
               <option v-for="m in availableModes" :key="m" :value="m">{{ modeLabel(m) }}</option>
             </select>
-          </div>
+          </label>
 
-          <div v-if="reasoningMode === 'effort' || effortOptional" class="form-group">
+          <label v-if="reasoningMode === 'effort' || effortOptional" class="field">
             <span class="form-label">Effort 等级</span>
             <select
               :value="effortOptional ? (modelValue.reasoning?.effort ?? '') : effortValue"
@@ -124,9 +115,9 @@
               <option v-if="effortOptional" value="">不设</option>
               <option v-for="e in effortOptions" :key="e" :value="e">{{ e }}</option>
             </select>
-          </div>
+          </label>
 
-          <div v-if="reasoningMode === 'budget'" class="form-group">
+          <label v-if="reasoningMode === 'budget'" class="field">
             <span class="form-label">Budget Tokens</span>
             <input
               :value="modelValue.reasoning?.budgetTokens ?? ''"
@@ -137,18 +128,15 @@
               placeholder="例如 8192"
               @input="updateReasoningBudget(($event.target as HTMLInputElement).value)"
             />
-          </div>
+          </label>
         </template>
-      </template>
-    </div>
+      </div>
 
-    <details v-if="kind === 'chat' && selectedProvider?.type === 'openai'" class="advanced">
-      <summary class="advanced-summary">
-        <ChevronRight :size="14" class="advanced-chevron" />
-        <span>高级</span>
-        <span class="advanced-hint">附加请求体（仅本槽位）</span>
-      </summary>
-      <div class="advanced-body">
+      <details v-if="kind === 'chat' && selectedProvider?.type === 'openai'" class="advanced">
+        <summary class="advanced-summary">
+          <ChevronRight :size="13" class="advanced-chevron" />
+          <span>附加请求体（仅本槽位）</span>
+        </summary>
         <textarea
           v-model="extraBodyText"
           class="form-input mono advanced-textarea"
@@ -157,14 +145,21 @@
           @blur="commitExtraBody"
         />
         <span v-if="extraBodyError" class="advanced-error">{{ extraBodyError }}</span>
+      </details>
+
+      <div v-if="removable" class="detail-footer">
+        <button class="btn btn--danger" type="button" @click="$emit('remove')">
+          <Trash2 :size="13" />
+          <span>删除这个群的覆盖</span>
+        </button>
       </div>
-    </details>
+    </div>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed, ref, watch } from "vue";
-import { Check, ChevronRight, RotateCw, Trash2 } from "lucide-vue-next";
+import { ChevronRight, RotateCw, Trash2 } from "lucide-vue-next";
 import type {
   ModelConfig,
   ProviderConfig,
@@ -176,6 +171,8 @@ import type { AgentModelConfig } from "../../src/agent/models";
 const props = defineProps<{
   path: string;
   label: string;
+  /** 群覆盖行在名称下方显示群 ID */
+  sublabel?: string;
   description: string;
   /** agent：多一个缓存 TTL（AgentModelConfig.cacheTtlMinutes） */
   kind: "chat" | "embedding" | "agent";
@@ -192,11 +189,37 @@ const emit = defineEmits<{
   (event: "remove"): void;
 }>();
 
+const open = ref(false);
+
 const selectedProvider = computed(() => props.providers.find((p) => p.id === props.modelValue.providerId) ?? null);
 
 const datalistId = computed(() => `models-${props.path.replace(/\./g, "-")}`);
 
 const reasoningMode = computed<ReasoningMode>(() => props.modelValue.reasoning?.mode ?? "auto");
+
+/** 收起时要一眼看出没配完的槽位 */
+const problem = computed(() => {
+  if (!selectedProvider.value) return "未选供应商";
+  if (!props.modelValue.modelName) return "未填模型名";
+  return "";
+});
+
+const summary = computed(() => {
+  if (props.kind === "embedding") return "";
+  const m = props.modelValue;
+  const parts: string[] = [];
+  if (m.temperature !== undefined && selectedProvider.value?.type !== "anthropic") parts.push(`T ${m.temperature}`);
+  if (m.maxTokens !== undefined) parts.push(String(m.maxTokens));
+  const ttl = (m as AgentModelConfig).cacheTtlMinutes;
+  if (props.kind === "agent" && ttl !== undefined) parts.push(`TTL ${ttl}`);
+  if (availableModes.value.length > 1) {
+    parts.push(reasoningMode.value);
+    if (m.reasoning?.effort) parts.push(m.reasoning.effort);
+    if (reasoningMode.value === "budget" && m.reasoning?.budgetTokens !== undefined) parts.push(`${m.reasoning.budgetTokens} tok`);
+  }
+  if (m.extraBody && Object.keys(m.extraBody).length) parts.push("+body");
+  return parts.join(" · ");
+});
 
 const availableModes = computed<ReasoningMode[]>(() => {
   const provider = selectedProvider.value;
@@ -365,166 +388,144 @@ function commitExtraBody() {
 </script>
 
 <style scoped>
-.slot-card {
+.slot + .slot {
+  border-top: 1px solid var(--c-border-light);
+}
+
+.slot-row {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto 16px;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 14px 8px 16px;
+  border: none;
+  background: transparent;
+  color: var(--c-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.slot-row:hover,
+.slot--open .slot-row {
   background: var(--c-bg-soft);
-  border: 1px solid var(--c-border-light);
-  border-radius: var(--radius-md);
-  padding: 14px;
+}
+
+.slot-row:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -2px;
+}
+
+.slot-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.slot--nested .slot-label {
+  padding-left: 12px;
+  border-left: 2px solid var(--c-border-light);
+}
+
+.slot-name {
+  font-weight: 500;
+}
+
+.slot-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--c-text-4);
+}
+
+.slot-model {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.slot-model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+}
+
+.slot-problem {
+  color: var(--c-danger);
+  white-space: nowrap;
+}
+
+.slot-provider {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--c-text-4);
+}
+
+.slot-summary {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--c-text-4);
+  white-space: nowrap;
+}
+
+.slot-chevron {
+  color: var(--c-text-4);
+  transition: transform 150ms;
+}
+
+.slot--open .slot-chevron {
+  transform: rotate(90deg);
+}
+
+.slot-detail {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: 4px 42px 16px 148px;
+  background: var(--c-bg-soft);
 }
 
-.slot-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.slot-title-block {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.slot-title {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--c-text);
-}
-
-.slot-desc {
-  font-size: 11px;
-  color: var(--c-text-4);
-  line-height: 1.4;
-}
-
-.slot-path {
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--c-bg);
-  color: var(--c-text-4);
-}
-
-.mono {
-  font-family: var(--font-mono);
-}
-
-.provider-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.provider-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border: 1px solid var(--c-border);
-  border-radius: 999px;
-  background: var(--c-bg);
-  color: var(--c-text-2);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 150ms, border-color 150ms, color 150ms;
-}
-
-.provider-chip:hover {
-  background: var(--c-bg-muted);
-  color: var(--c-text);
-}
-
-.provider-chip--active {
-  background: var(--c-accent-soft);
-  border-color: var(--c-accent);
-  color: var(--c-accent-active);
-  font-weight: 600;
-}
-
-.provider-chip--active:hover {
-  background: var(--c-accent-soft);
-}
-
-.chip-check {
-  color: var(--c-accent);
-}
-
-.chip-type {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--c-bg-muted);
-  color: var(--c-text-4);
-  font-family: var(--font-mono);
-  font-size: 10px;
-}
-
-.provider-chip--active .chip-type {
-  background: rgba(13, 148, 136, 0.15);
-  color: var(--c-accent-active);
-}
-
-.provider-empty {
-  padding: 8px 10px;
-  border: 1px dashed var(--c-border);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  color: var(--c-text-4);
-  text-align: center;
-}
-
-.slot-grid {
+.detail-main {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr) auto;
   gap: 10px;
+  align-items: end;
 }
 
-.form-group {
+.detail-params {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  min-width: 0;
 }
 
-.form-hint {
-  font-size: 11px;
-  color: var(--c-text-4);
-  line-height: 1.4;
-}
-
-.form-label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.slot-refresh {
-  font-size: 11px;
-  padding: 2px 6px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.advanced {
-  border: 1px solid var(--c-border);
-  border-radius: var(--radius-sm);
-  background: var(--c-bg);
+.field .form-hint {
+  margin-top: 3px;
 }
 
 .advanced-summary {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 4px;
   cursor: pointer;
   user-select: none;
   font-size: 12px;
-  font-weight: 500;
   color: var(--c-text-2);
+  list-style: none;
 }
 
 .advanced-summary::-webkit-details-marker {
@@ -533,41 +534,47 @@ function commitExtraBody() {
 
 .advanced-chevron {
   transition: transform 150ms;
-  color: var(--c-text-4);
 }
 
 .advanced[open] .advanced-chevron {
   transform: rotate(90deg);
 }
 
-.advanced-hint {
-  margin-left: auto;
-  color: var(--c-text-4);
-  font-size: 11px;
-  font-weight: 400;
-}
-
-.advanced-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 10px 10px;
-}
-
 .advanced-textarea {
-  min-height: 70px;
-  resize: vertical;
-  font-size: 12px;
+  margin-top: 8px;
+  min-height: 72px;
 }
 
 .advanced-error {
+  display: block;
+  margin-top: 4px;
   font-size: 11px;
   color: var(--c-danger);
 }
 
-@media (max-width: 720px) {
-  .slot-grid {
+.detail-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .slot-row {
+    grid-template-columns: 96px minmax(0, 1fr) 16px;
+  }
+  .slot-summary {
+    display: none;
+  }
+  .slot-detail {
+    padding: 4px 16px 16px;
+  }
+  .detail-main {
     grid-template-columns: 1fr;
+  }
+  .detail-main .btn {
+    justify-self: start;
+  }
+  .detail-params {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>
