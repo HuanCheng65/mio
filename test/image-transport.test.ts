@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { Context } from "koishi";
 import sqlite from "@koishijs/plugin-database-sqlite";
 import { Jimp } from "jimp";
+import sharp from "sharp";
 import { createImageTransport, extendImageTables, ImageFitter, UploadedImages, type FileUploader, type ImageTransport } from "../src/agent/image-transport";
 import type { ProviderConfig } from "../src/llm/provider";
 
@@ -52,6 +53,30 @@ test("images within the pixel target are linked as they are, larger ones shrink 
   assert.ok(big.width * big.height <= 50 * 50);
   assert.equal(Math.round(big.width / big.height), 4, "keeps the aspect ratio");
   assert.equal(big.mime, "image/jpeg");
+});
+
+test("with a long-edge cap, long screenshots and long GIFs are shrunk to it; without one they are not", async () => {
+  const dir = await media({ "long.png": { width: 20, height: 400 }, "short.png": { width: 20, height: 40 } });
+  await sharp(join(dir, "long.png")).gif().toFile(join(dir, "long.gif"));
+
+  const capped = new ImageFitter(dir, 100_000, 100);
+  const long = await Jimp.read(await capped.path("long.png"));
+  assert.deepEqual([long.width, long.height], [5, 100]);
+  assert.equal(statSync(await capped.path("short.png")).ino, statSync(join(dir, "short.png")).ino);
+  const gif = await sharp(await capped.path("long.gif")).metadata();
+  assert.deepEqual([gif.format, gif.width, gif.height], ["gif", 5, 100]);
+
+  const uncapped = new ImageFitter(dir, 100_000);
+  assert.equal(statSync(await uncapped.path("long.png")).ino, statSync(join(dir, "long.png")).ino);
+  assert.equal(await uncapped.path("long.gif"), join(dir, "long.gif"));
+});
+
+test("photos with an EXIF rotation are shrunk by their upright size", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mio-media-"));
+  // 存成 400×100，EXIF 说要转 90°：转正后是 100×400
+  await sharp({ create: { width: 400, height: 100, channels: 3, background: "#3366cc" } }).jpeg().withMetadata({ orientation: 6 }).toFile(join(dir, "photo.jpg"));
+  const fitted = await sharp(await new ImageFitter(dir, 50 * 200).path("photo.jpg")).metadata();
+  assert.deepEqual([fitted.width, fitted.height], [50, 200]);
 });
 
 test("GIF and WebP go out untouched, unknown types are refused", async () => {

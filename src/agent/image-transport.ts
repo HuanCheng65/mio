@@ -33,28 +33,36 @@ function mimeOf(file: string): string {
 }
 
 /**
- * 发送前把图缩到 maxPixels 以内。供应商服务端本来就会缩到它自己的目标尺寸，按同一目标先缩，
- * 模型看到的不变，请求和上传却小得多；原图留在 mediaDir 不动。
- * 结果按 maxPixels 分目录缓存，本来就够小的图硬链接过去，之后只需查文件在不在。
- * GIF 缩了会丢动画，WebP 也可能是动图，这两种原样发，交给服务端缩。
+ * Anthropic 的长边上限。一次请求超过 20 张图时，任何一边超过 3000 px 的图都会让整个请求被拒；
+ * Claude 4.7 及以后本来就把长边缩到 2576，按这个缩，模型看到的不变。长截图只按总像素缩，
+ * 高度仍可能远超这个数（比如 300×3800）。
+ */
+export const ANTHROPIC_MAX_EDGE = 2576;
+
+/**
+ * 发送前把图缩到 maxPixels 以内，给了 maxEdge 时长边也不超过它。供应商服务端本来就会缩到它自己的目标尺寸，
+ * 按同一目标先缩，模型看到的不变，请求和上传却小得多；原图留在 mediaDir 不动。
+ * 结果按设置分目录缓存，本来就够小的图硬链接过去，之后只需查文件在不在。
+ * GIF 缩了会丢动画，WebP 也可能是动图：这两种只在长边超限时才缩（保留动画），否则原样发，交给服务端缩。
  */
 export class ImageFitter {
   private dir: string;
   private pending = new Map<string, Promise<string>>();
 
-  constructor(private mediaDir: string, private maxPixels: number) {
-    this.dir = join(mediaDir, `fit-${maxPixels}`);
+  constructor(private mediaDir: string, private maxPixels: number, private maxEdge?: number) {
+    this.dir = join(mediaDir, maxEdge ? `fit-${maxPixels}-e${maxEdge}` : `fit-${maxPixels}`);
   }
 
   async path(file: string): Promise<string> {
     const mime = mimeOf(file);
-    if (mime === "image/gif" || mime === "image/webp") return join(this.mediaDir, file);
+    const animatable = mime === "image/gif" || mime === "image/webp";
+    if (animatable && !this.maxEdge) return join(this.mediaDir, file);
     const target = join(this.dir, file);
     if (existsSync(target)) return target;
     // 两个群同时用到同一张图时只缩一次
     let task = this.pending.get(file);
     if (!task) {
-      task = this.fit(file, mime, target).finally(() => this.pending.delete(file));
+      task = (animatable ? this.fitAnimatable(file, mime, target) : this.fit(file, mime, target)).finally(() => this.pending.delete(file));
       this.pending.set(file, task);
     }
     return task;
@@ -63,16 +71,34 @@ export class ImageFitter {
   private async fit(file: string, mime: string, target: string): Promise<string> {
     await mkdir(this.dir, { recursive: true });
     const source = join(this.mediaDir, file);
-    const { width, height } = await sharp(source).metadata();
-    const pixels = width * height;
-    if (pixels <= this.maxPixels) {
+    // 按转正后的尺寸算：手机照片常带 EXIF 旋转，用原始宽高会把图拉变形
+    const { width, height } = (await sharp(source).metadata()).autoOrient;
+    const pixelScale = Math.sqrt(this.maxPixels / (width * height));
+    const edgeScale = this.maxEdge ? this.maxEdge / Math.max(width, height) : Infinity;
+    const scale = Math.min(pixelScale, edgeScale);
+    if (scale >= 1) {
       await link(source, target);
       return target;
     }
-    const scale = Math.sqrt(this.maxPixels / pixels);
     const resized = sharp(source).autoOrient().resize(Math.round(width * scale), Math.round(height * scale));
     // 先写临时文件再改名：进程在写到一半时被杀，也不会留下一张残缺的图被一直用下去
     await (mime === "image/png" ? resized.png() : resized.jpeg({ quality: 90 })).toFile(`${target}.tmp`);
+    await rename(`${target}.tmp`, target);
+    return target;
+  }
+
+  private async fitAnimatable(file: string, mime: string, target: string): Promise<string> {
+    await mkdir(this.dir, { recursive: true });
+    const source = join(this.mediaDir, file);
+    const meta = await sharp(source, { animated: true }).metadata();
+    const height = meta.pageHeight ?? meta.height;
+    const scale = this.maxEdge! / Math.max(meta.width, height);
+    if (scale >= 1) {
+      await link(source, target);
+      return target;
+    }
+    const resized = sharp(source, { animated: true }).resize(Math.round(meta.width * scale));
+    await (mime === "image/gif" ? resized.gif() : resized.webp()).toFile(`${target}.tmp`);
     await rename(`${target}.tmp`, target);
     return target;
   }
@@ -293,7 +319,7 @@ export class PinnedImageTransport implements ImageTransport {
   private fitter(maxPixels: number): ImageFitter {
     let fitter = this.fitters.get(maxPixels);
     if (!fitter) {
-      fitter = new ImageFitter(this.mediaDir, maxPixels);
+      fitter = new ImageFitter(this.mediaDir, maxPixels, this.provider.type === "anthropic" ? ANTHROPIC_MAX_EDGE : undefined);
       this.fitters.set(maxPixels, fitter);
     }
     return fitter;
