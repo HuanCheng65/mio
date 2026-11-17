@@ -28,3 +28,42 @@ export interface TokenStats {
   byDate: Record<string, TokenUsageRow>;
   detail: TokenUsageDetail[];
 }
+
+export type NoteKind = "fact" | "impression" | "event" | "self" | "sticker";
+
+export interface MemoryGroup {
+  groupId: string;
+  name: string | null;
+  mode: string;
+  notes: number;
+}
+
+export interface MemoryNote {
+  id: number;
+  kind: NoteKind;
+  about: string;
+  aboutLabel: string;
+  title: string;
+  content: string;
+  sources: number[];
+  private: boolean;
+  file: string | null;
+  recallCount: number;
+  lastRecalledAt: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface MemorySource {
+  seq: number;
+  timestamp: number;
+  sender: string;
+  text: string;
+}
+
+export interface MemorySegment {
+  segment: number;
+  startedAt: number;
+  tokens: number;
+  summary: string | null;
+}

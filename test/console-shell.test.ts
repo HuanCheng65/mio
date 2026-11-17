@@ -8,6 +8,7 @@ test("console shell opens on the config studio so a broken config can be fixed f
   assert.equal(DEFAULT_CONSOLE_SECTION, "config");
   assert.deepEqual(sections.map((section) => section.id), [
     "config",
+    "memory",
     "runtime",
   ]);
   assert.equal(sections[0].label, "模型配置");

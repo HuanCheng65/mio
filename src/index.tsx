@@ -17,6 +17,7 @@ import { extendImageTables } from "./agent/image-transport";
 import { extendNoteTable } from "./agent/notes";
 import { AliasRegistry } from "./agent/aliases";
 import { tryBootstrapAgent } from "./agent/bootstrap";
+import { GroupNames } from "./agent/group-names";
 import type { RecordListener } from "./agent/recorder";
 import { extendTokenTable, tokenTracker } from "./llm/token-tracker";
 import { extendMetaTable } from "./memory/embedding";
@@ -24,6 +25,7 @@ import { registerConsoleShell } from "./console/shell";
 import { registerTokenStats } from "./console/token-stats";
 import { ConfigService } from "./console/config-service";
 import { registerConfigListeners } from "./console/config-listeners";
+import { registerMemoryBrowser } from "./console/memory-browser";
 
 export const name = "mio";
 export const inject = ["database"];
@@ -61,10 +63,12 @@ export function apply(ctx: Context, config: MioConfig) {
   const groups = new GroupRegistry(ctx);
   const events = new EventStore(ctx);
   const aliases = new AliasRegistry(ctx);
+  const groupNames = new GroupNames(ctx, logger);
   const mediaDir = path.resolve(ctx.baseDir, "data/mio/media");
   const listeners: RecordListener[] = [];
   registerGroupCommands(ctx, groups, events, logger);
   trackSentRefs(ctx, logger);
+  registerMemoryBrowser(ctx, groups, groupNames);
   registerRecorder(ctx, {
     groups,
     normalizer: new MessageNormalizer(config.botName),
@@ -76,5 +80,5 @@ export function apply(ctx: Context, config: MioConfig) {
   });
 
   // Phase B — 新运行时；配置不满足时保持 Phase A 存活，等待 UI 修复。
-  tryBootstrapAgent(ctx, config, logger, { groups, events, aliases, mediaDir, listeners });
+  tryBootstrapAgent(ctx, config, logger, { groups, events, aliases, mediaDir, listeners, groupNames });
 }

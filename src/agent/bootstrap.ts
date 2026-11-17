@@ -20,7 +20,7 @@ import { Outbox } from "./outbox";
 import { createReactTool, createRepeatTool, createSayTool, createStickerTool } from "./outward-tools";
 import { Recollection } from "./recollection";
 import { talkShareNote } from "./talk-share";
-import { GroupNames } from "./group-names";
+import type { GroupNames } from "./group-names";
 import { markOwnSends } from "./qq-refs";
 import { passiveReplyBlocker, recordPassiveReply } from "../platform/qq";
 import type { RecordListener } from "./recorder";
@@ -35,11 +35,12 @@ export interface AgentShared {
   aliases: AliasRegistry;
   mediaDir: string;
   listeners: RecordListener[];
+  groupNames: GroupNames;
 }
 
 /** 启动新运行时；配置不满足时说明原因并返回 false，录制等其他功能不受影响 */
 export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logger, shared: AgentShared): boolean {
-  const { groups, events, aliases, mediaDir, listeners } = shared;
+  const { groups, events, aliases, mediaDir, listeners, groupNames } = shared;
   const agent = config.agent;
 
   const modelUses = checkAgentModels(agent, config.providers);
@@ -79,7 +80,6 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   const notes = new NoteStore(ctx, embedding);
   const recollection = new Recollection(ctx, notes, aliases, agent.recollection);
   const outbox = new Outbox(agent.guards);
-  const groupNames = new GroupNames(ctx, logger);
   const log = new AgentLog(ctx, aliases, {
     botName: config.botName,
     images,

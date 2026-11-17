@@ -1,7 +1,7 @@
-import { Activity, Cpu } from "lucide-vue-next";
+import { Activity, BookOpen, Cpu } from "lucide-vue-next";
 
 export interface ConsoleSection {
-  id: "config" | "runtime";
+  id: "config" | "memory" | "runtime";
   label: string;
   icon: any;
 }
@@ -14,6 +14,11 @@ export function createConsoleSections(): ConsoleSection[] {
       id: "config",
       label: "模型配置",
       icon: Cpu,
+    },
+    {
+      id: "memory",
+      label: "记忆",
+      icon: BookOpen,
     },
     {
       id: "runtime",
