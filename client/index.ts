@@ -1,11 +1,14 @@
-import { Context } from '@koishijs/client'
+import { Context, icons } from '@koishijs/client'
 import Page from './page.vue'
+import MioIcon from './icons/mio.vue'
+
+icons.register('activity:mio', MioIcon)
 
 export default (ctx: Context) => {
   ctx.page({
     name: '澪统一控制台',
     path: '/mio',
-    icon: 'material-symbols:dashboard-outline-rounded',
+    icon: 'activity:mio',
     component: Page,
   })
 }
