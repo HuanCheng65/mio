@@ -87,7 +87,7 @@ export class AgentLLM {
       cachedTokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       cacheWriteTokens: 0,
     };
-    tokenTracker.record(model.modelName, usage.promptTokens, usage.completionTokens, usage.cachedTokens, "agent");
+    tokenTracker.record(model.modelName, usage, "agent");
 
     return {
       content: message.content ?? "",
@@ -105,7 +105,7 @@ export class AgentLLM {
     const response = await client.beta.messages.create(buildAnthropicRequest(messages, tools, model));
     const parsed = parseAnthropicResponse(response, model);
     // 按实际回答的模型记账（server-side fallback 时是备用模型）。promptTokens 含缓存读写，和其他供应商的统计口径一致
-    tokenTracker.record(response.model, parsed.usage.promptTokens, parsed.usage.completionTokens, parsed.usage.cachedTokens, "agent");
+    tokenTracker.record(response.model, parsed.usage, "agent");
     const system = messages[0].role === "system" ? messages[0].content : "";
     return { ...parsed, reasoning: null, promptDigest: anthropicPromptDigest(system, tools) };
   }

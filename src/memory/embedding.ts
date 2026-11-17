@@ -116,9 +116,7 @@ export class EmbeddingService {
 
     tokenTracker.record(
       this.modelConfig.modelName,
-      response.usage?.prompt_tokens || 0,
-      0,
-      0,
+      { promptTokens: response.usage?.prompt_tokens || 0, completionTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 },
       'embedding',
     )
 

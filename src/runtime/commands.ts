@@ -60,10 +60,10 @@ export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): v
     const lines: string[] = [];
 
     lines.push(`总调用: ${stats.totalCalls} 次`);
-    lines.push(`总量: ${stats.totalPromptTokens} prompt + ${stats.totalCompletionTokens} completion (cached: ${stats.totalCachedTokens})`);
+    lines.push(`总量: ${stats.totalPromptTokens} prompt + ${stats.totalCompletionTokens} completion (cached: ${stats.totalCachedTokens}, cache write: ${stats.totalCacheWriteTokens})`);
 
     for (const [model, usage] of Object.entries(stats.byModel)) {
-      lines.push(`  ${model}: ${usage.promptTokens}p + ${usage.completionTokens}c (cached: ${usage.cachedTokens}), ${usage.calls} 次`);
+      lines.push(`  ${model}: ${usage.promptTokens}p + ${usage.completionTokens}c (cached: ${usage.cachedTokens}, cache write: ${usage.cacheWriteTokens}), ${usage.calls} 次`);
     }
 
     return lines.join("\n");

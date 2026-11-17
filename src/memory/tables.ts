@@ -92,11 +92,13 @@ export interface MioTokenUsageRow {
   promptTokens: number
   completionTokens: number
   cachedTokens: number
+  cacheWriteTokens: number
   calls: number
   purposeStats?: Record<string, {
     promptTokens: number
     completionTokens: number
     cachedTokens: number
+    cacheWriteTokens: number
     calls: number
   }>
 }

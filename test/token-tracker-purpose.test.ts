@@ -6,6 +6,7 @@ interface UsageItem {
   promptTokens: number;
   completionTokens: number;
   cachedTokens: number;
+  cacheWriteTokens: number;
   calls: number;
 }
 
@@ -49,30 +50,44 @@ test("TokenTracker aggregates token usage by purpose", async () => {
   const tracker = new TokenTracker();
   tracker.init(ctx);
 
-  tracker.record("gpt-4o", 100, 50, 10, "conversation");
-  tracker.record("gpt-4o", 30, 10, 0, "memory-extraction");
-  tracker.record("gpt-4o", 5, 5, 0, "conversation");
-  tracker.record("text-embedding-3-large", 20, 0, 0, "embedding");
+  const usage = (promptTokens: number, completionTokens: number, cachedTokens: number, cacheWriteTokens = 0) =>
+    ({ promptTokens, completionTokens, cachedTokens, cacheWriteTokens });
+  tracker.record("gpt-4o", usage(100, 50, 10), "conversation");
+  tracker.record("gpt-4o", usage(30, 10, 0), "memory-extraction");
+  tracker.record("gpt-4o", usage(5, 5, 0), "conversation");
+  tracker.record("text-embedding-3-large", usage(20, 0, 0), "embedding");
+  tracker.record("claude-sonnet-5-5", usage(9000, 40, 900, 8000), "agent");
 
   const stats = await tracker.getStats();
 
-  assert.equal(stats.totalCalls, 4);
+  assert.equal(stats.totalCalls, 5);
+  assert.equal(stats.totalCacheWriteTokens, 8000);
   assert.deepEqual(stats.byPurpose.conversation, {
     promptTokens: 105,
     completionTokens: 55,
     cachedTokens: 10,
+    cacheWriteTokens: 0,
     calls: 2,
   });
   assert.deepEqual(stats.byPurpose["memory-extraction"], {
     promptTokens: 30,
     completionTokens: 10,
     cachedTokens: 0,
+    cacheWriteTokens: 0,
     calls: 1,
   });
   assert.deepEqual(stats.byPurpose.embedding, {
     promptTokens: 20,
     completionTokens: 0,
     cachedTokens: 0,
+    cacheWriteTokens: 0,
+    calls: 1,
+  });
+  assert.deepEqual(stats.byModel["claude-sonnet-5-5"], {
+    promptTokens: 9000,
+    completionTokens: 40,
+    cachedTokens: 900,
+    cacheWriteTokens: 8000,
     calls: 1,
   });
 });

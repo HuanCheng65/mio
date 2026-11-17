@@ -69,13 +69,7 @@ export class LLMClient {
           responseFormat,
         );
 
-    tokenTracker.record(
-      modelConfig.modelName,
-      result.usage.promptTokens,
-      result.usage.completionTokens,
-      result.usage.cachedTokens,
-      purpose,
-    );
+    tokenTracker.record(modelConfig.modelName, { ...result.usage, cacheWriteTokens: 0 }, purpose);
 
     return result;
   }

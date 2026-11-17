@@ -74,6 +74,7 @@
                 <th class="col-num">Prompt</th>
                 <th class="col-num">Completion</th>
                 <th class="col-num">Cached</th>
+                <th class="col-num" title="写入提示缓存的输入（已含在 Prompt 里）；Anthropic 1 小时缓存按普通输入的 2 倍计价">Cache write</th>
                 <th class="col-num">调用</th>
               </tr>
             </thead>
@@ -89,6 +90,7 @@
                 <td class="col-num">{{ formatNumber(row.promptTokens) }}</td>
                 <td class="col-num">{{ formatNumber(row.completionTokens) }}</td>
                 <td class="col-num accent">{{ formatNumber(row.cachedTokens) }}</td>
+                <td class="col-num">{{ formatNumber(row.cacheWriteTokens) }}</td>
                 <td class="col-num">{{ row.calls }}</td>
               </tr>
             </tbody>
