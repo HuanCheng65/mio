@@ -8,7 +8,7 @@ import sqlite from "@koishijs/plugin-database-sqlite";
 import { extendEventTable, EventStore } from "../src/agent/event-store";
 import { AliasRegistry, extendAliasTable } from "../src/agent/aliases";
 import { Outbox } from "../src/agent/outbox";
-import { createReactTool, createSayTool, createStickerTool } from "../src/agent/outward-tools";
+import { createReactTool, createRepeatTool, createSayTool, createStickerTool } from "../src/agent/outward-tools";
 import { ToolRegistry, type ToolContext } from "../src/agent/tools";
 import type { NormalizedMessage } from "../src/perception/types";
 
@@ -139,5 +139,59 @@ test("sticker sends the found image and says so when nothing fits", async () => 
   assert.equal(await sticker.run({ feeling: "憋笑 猫" }, qq), "发了：憋笑的猫");
   assert.equal(sent.length, 1);
   assert.match(sent[0], /^<img src="data:image\/png;base64,/);
+  await app.stop();
+});
+
+async function addMessage(deps: { events: EventStore }, body: Partial<NormalizedMessage>) {
+  const msg: NormalizedMessage = { id: `plat-${Math.random()}`, sender: "小林", senderId: "OPENID_A", isBot: false, timestamp: Date.now(), segments: [], mentions: [], ...body };
+  const row = await deps.events.append(G, async () => ({ kind: "message", platformMessageId: msg.id, userId: msg.senderId, isBot: msg.isBot, timestamp: msg.timestamp, body: msg }));
+  return `m${row.seq}`;
+}
+
+test("repeat resends text, faces and saved images exactly, then cools down", async () => {
+  const { app, outbox, deps } = await setup();
+  const dir = mkdtempSync(join(tmpdir(), "mio-repeat-"));
+  writeFileSync(join(dir, "a.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+  const repeat = createRepeatTool({ ...deps, mediaDir: dir });
+  const { session, sent } = fakeSession();
+  outbox.noteUserMessage(G, session);
+
+  const line = await addMessage(deps, { segments: [
+    { type: "text", content: "以前会好奇，现在只剩<害怕>了" },
+    { type: "face", faceId: 178, name: "斜眼笑" },
+    { type: "image", url: "", description: null, isSticker: true, file: "a.png" },
+  ] });
+  assert.match(await repeat.run({ message: line }, qq), /^复读了 m\d+$/);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0], /^以前会好奇，现在只剩&lt;害怕&gt;了<face id="178"\/><img src="data:image\/png;base64,/);
+  assert.equal(outbox.isOwnMessage(G, "out1"), true);
+
+  const another = await addMessage(deps, { segments: [{ type: "text", content: "草" }] });
+  assert.match(await repeat.run({ message: another }, qq), /刚复读过/);
+  assert.equal(sent.length, 1);
+  await app.stop();
+});
+
+test("repeat refuses its own, stale, @-ing and unreplayable messages", async () => {
+  const { app, outbox, deps } = await setup();
+  const repeat = createRepeatTool({ ...deps, mediaDir: tmpdir() });
+  const { session, sent } = fakeSession();
+  outbox.noteUserMessage(G, session);
+
+  const own = await addMessage(deps, { isBot: true, segments: [{ type: "text", content: "我说的" }] });
+  const stale = await addMessage(deps, { timestamp: Date.now() - 6 * 60_000, segments: [{ type: "text", content: "很久以前" }] });
+  const mention = await addMessage(deps, { segments: [{ type: "text", content: "你看" }], mentions: [{ userId: "X", name: "某人" } as any] });
+  const lostImage = await addMessage(deps, { segments: [{ type: "image", url: "", description: null, isSticker: false }] });
+  const share = await addMessage(deps, { segments: [{ type: "share", subtype: "link", title: "链接" }] });
+
+  assert.match(await repeat.run({ message: own }, qq), /不复读自己/);
+  assert.match(await repeat.run({ message: stale }, qq), /趁热/);
+  assert.match(await repeat.run({ message: mention }, qq), /带 @/);
+  assert.match(await repeat.run({ message: lostImage }, qq), /没存下来/);
+  assert.match(await repeat.run({ message: share }, qq), /share/);
+  assert.deepEqual(sent, []);
+
+  const fine = await addMessage(deps, { segments: [{ type: "text", content: "草" }] });
+  assert.match(await repeat.run({ message: fine }, qq), /^复读了/, "refusals do not start the cooldown");
   await app.stop();
 });

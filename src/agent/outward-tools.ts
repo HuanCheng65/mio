@@ -1,8 +1,10 @@
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { h } from "koishi";
 import { humanizedSend, type DeliveryOptions } from "../delivery/humanize";
 import { ALLOWED_REACT_EMOJI_NAMES, findEmoji, stickerMimeType } from "../helpers";
 import { setMsgEmojiLike } from "../platform/onebot";
+import type { NormalizedMessage } from "../perception/types";
 import { passiveReplyBlocker, recordPassiveReply } from "../platform/qq";
 import type { AliasRegistry } from "./aliases";
 import type { EventStore, MioEventRow } from "./event-store";
@@ -133,6 +135,73 @@ export function createReactTool(deps: OutwardDeps): AgentTool {
       if (!session) return "现在没有可用的会话，这次点不了";
       await setMsgEmojiLike(session, target.platformMessageId, emoji.id);
       return `给 m${target.seq} 点了${emoji.name}`;
+    },
+  };
+}
+
+/** 复读要趁热：太久以前的消息不复读 */
+const REPEAT_MAX_AGE_MS = 5 * 60_000;
+/** 复读是偶尔的梗，同一个群两次复读至少隔这么久 */
+const REPEAT_COOLDOWN_MS = 10 * 60_000;
+
+/** 把一条群友消息原样还原成消息元素；有还原不了的内容时给出原因 */
+async function replayContent(event: MioEventRow, mediaDir: string): Promise<{ content: string } | { refused: string }> {
+  const msg = event.body as NormalizedMessage;
+  if (msg.mentions.length > 0) return { refused: "带 @ 的消息不复读" };
+  let content = "";
+  for (const seg of msg.segments) {
+    if (seg.type === "text") content += h.escape(seg.content);
+    else if (seg.type === "face") content += h("face", { id: seg.faceId }).toString();
+    else if (seg.type === "image") {
+      if (!seg.file) return { refused: "那张图当时没存下来，复读不了" };
+      const path = join(mediaDir, seg.file);
+      content += h.image(await readFile(path), stickerMimeType(path)).toString();
+    } else return { refused: `这条里有${seg.type}，没法原样复读` };
+  }
+  return content ? { content } : { refused: "这条是空的" };
+}
+
+export function createRepeatTool(deps: OutwardDeps & { mediaDir: string }): AgentTool {
+  const lastRepeatAt = new Map<string, number>();
+  return {
+    name: "repeat",
+    outward: true,
+    description:
+      "复读：把群友刚发的某条消息原样再发一遍，一个字、一个标点都不改，图和表情也照搬。" +
+      "群里有人在复读、或者某句话好笑到值得跟一句的时候用。只能复读几分钟内别人发的消息，而且不能常用。",
+    parameters: {
+      type: "object",
+      properties: { message: { type: "string", description: "要复读的消息编号，如 m12" } },
+      required: ["message"],
+    },
+    async run(args, ctx) {
+      const target = await findMessage(deps.events, ctx.groupId, args.message);
+      if (typeof target === "string") return `${target}，没复读`;
+      if (target.isBot) return "不复读自己说过的话";
+      if (Date.now() - target.timestamp > REPEAT_MAX_AGE_MS) return "这条已经过去好几分钟了，复读要趁热，没复读";
+      const last = lastRepeatAt.get(ctx.groupId);
+      if (last !== undefined && Date.now() - last < REPEAT_COOLDOWN_MS) return "刚复读过，这次就算了";
+      const guard = deps.outbox.blocker(ctx.groupId);
+      if (guard) return guard;
+
+      const replayed = await replayContent(target, deps.mediaDir);
+      if ("refused" in replayed) return `${replayed.refused}，没复读`;
+      const { content } = replayed;
+      lastRepeatAt.set(ctx.groupId, Date.now());
+
+      if (ctx.shadow) {
+        deps.outbox.recordSent(ctx.groupId, []);
+        return `复读了 m${target.seq}`;
+      }
+      const session = deps.outbox.latestSession(ctx.groupId);
+      if (!session) return "现在没有可以挂靠回复的消息，这次发不出去";
+      const blocked = passiveReplyBlocker(session);
+      if (blocked) return `没发出去：${blocked}`;
+      const ids = await session.send(content);
+      recordPassiveReply(session);
+      deps.outbox.recordSent(ctx.groupId, ids);
+      await deps.markOwn(ctx.groupId, ids);
+      return `复读了 m${target.seq}`;
     },
   };
 }

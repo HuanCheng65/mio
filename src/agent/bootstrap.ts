@@ -16,7 +16,7 @@ import { AgentLog } from "./log-store";
 import { createPersonTool, createRecallTool, createRememberTool, createStickerFinder } from "./memory-tools";
 import { NOTE_EMBEDDING_KEY, NoteStore } from "./notes";
 import { Outbox } from "./outbox";
-import { createReactTool, createSayTool, createStickerTool } from "./outward-tools";
+import { createReactTool, createRepeatTool, createSayTool, createStickerTool } from "./outward-tools";
 import { Recollection } from "./recollection";
 import { talkShareNote } from "./talk-share";
 import { GroupNames } from "./group-names";
@@ -85,6 +85,7 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
     createSayTool(outwardDeps),
     createReactTool(outwardDeps),
     createStickerTool({ ...outwardDeps, stickers: createStickerFinder(ctx, notes, mediaDir) }),
+    createRepeatTool({ ...outwardDeps, mediaDir }),
     createRecallTool(memoryDeps),
     createPersonTool(memoryDeps),
     createRememberTool(memoryDeps),
