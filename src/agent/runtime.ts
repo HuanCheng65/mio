@@ -1,33 +1,14 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Context } from "koishi";
-import { DATA_DIR } from "../paths";
 import { parseGroupId } from "../runtime/groups";
 import type { AgentLLM } from "./llm";
 import type { AgentLog, ChatMessage } from "./log-store";
+import type { AgentPrompts } from "./prompts";
 import { SLEEP_MARGIN_MINUTES, type AgentModelConfig } from "./models";
 import type { ToolRegistry } from "./tools";
 
 type Logger = ReturnType<Context["logger"]>;
 
-/** 人设 + 环境说明。两者都是固定文本，不放时间等会变的内容，保证前缀可缓存。 */
-export function loadAgentSystemPrompt(personaFile: string): string {
-  const persona = readFileSync(join(DATA_DIR, "persona", personaFile), "utf8").trim();
-  const environment = readFileSync(join(DATA_DIR, "agent", "environment.md"), "utf8").trim();
-  return `${persona}\n\n---\n\n${environment}`;
-}
-
-export function loadReminder(): string {
-  return readFileSync(join(DATA_DIR, "agent", "reminder.md"), "utf8").trim();
-}
-
-export function loadSleepPrompt(): string {
-  return readFileSync(join(DATA_DIR, "agent", "sleep.md"), "utf8").trim();
-}
-
 export interface SleepOptions {
-  /** 睡前整理的说明，{time} 会换成当前时间 */
-  prompt: string;
   maxSteps: number;
   /** log 达到这个大小，在这次唤醒结束后睡 */
   compactTokens: number;
@@ -41,12 +22,12 @@ export interface AgentRuntimeOptions {
   /** 这个群用的 agent 模型（按群覆盖，没覆盖的用默认）；唤醒和睡前整理的每一步都按它选 */
   modelFor: (groupId: string) => AgentModelConfig;
   maxSteps: number;
-  systemPrompt: string;
   /**
-   * 唤醒时每一步请求末尾的说话提醒。人设在 log 最前面，log 一长就被她自己最近的话盖过去。
+   * 当前的提示词（Console 里改了之后下一步就用新的）。
+   * reminder 是唤醒时每一步请求末尾的说话提醒：人设在 log 最前面，log 一长就被她自己最近的话盖过去。
    * 提醒只管那一轮；请求成功后连同回复一起写进 log，以后原样发回、留在原位，前缀不变。
    */
-  reminder: string;
+  prompts: () => AgentPrompts;
   isShadow: (groupId: string) => boolean;
   sleep: SleepOptions;
   /** 开了新的一段 log 之后调用（例如重置记忆浮现的去重） */
@@ -163,7 +144,7 @@ export class AgentRuntime {
     await this.log.appendPendingBatch(groupId);
     await this.log.appendEntry(groupId, {
       role: "user",
-      content: [{ type: "text", text: this.options.sleep.prompt.replace("{time}", clockNow()) }],
+      content: [{ type: "text", text: this.options.prompts().sleep.replace("{time}", clockNow()) }],
     });
     const result = await this.steps(groupId, { maxSteps: this.options.sleep.maxSteps, allowOutward: false, appendArrivals: false });
     if (result.endedWithTools) throw new Error(`[${groupId}] 睡前整理用完 ${this.options.sleep.maxSteps} 步，还没写出群速写和交接`);
@@ -194,12 +175,14 @@ export class AgentRuntime {
     for (let step = 1; step <= options.maxSteps; step++) {
       if (step > 1 && options.appendArrivals) await this.log.appendPendingBatch(groupId);
       const entries = await this.log.entries(groupId);
+      // 每一步取一次：发出去的提醒和写进 log 的必须是同一份
+      const prompts = this.options.prompts();
       const messages: ({ role: "system"; content: string } | ChatMessage)[] = [
-        { role: "system" as const, content: this.options.systemPrompt },
+        { role: "system" as const, content: prompts.systemPrompt },
         ...(await this.log.toChatMessages(entries)),
       ];
       // 唤醒的每一步末尾都带一份提醒：工具结果也算新一轮，之前那份已经清掉了
-      if (options.appendArrivals) messages.push({ role: "reminder", content: this.options.reminder });
+      if (options.appendArrivals) messages.push({ role: "reminder", content: prompts.reminder });
       const sentAt = Date.now();
       const gap = sentAt - (this.lastRequestAt.get(groupId) ?? sentAt);
       this.lastRequestAt.set(groupId, sentAt);
@@ -217,7 +200,7 @@ export class AgentRuntime {
       // 什么都没回的一步在 Anthropic 请求里会被省略，这时也不写提醒，否则它后面会紧跟下一条 user 消息
       const rendered = result.anthropicContent ? result.anthropicContent.length > 0 : Boolean(result.content) || result.toolCalls.length > 0;
       if (options.appendArrivals && rendered) {
-        await this.log.appendEntry(groupId, { role: "reminder", content: [{ type: "text", text: this.options.reminder }] });
+        await this.log.appendEntry(groupId, { role: "reminder", content: [{ type: "text", text: prompts.reminder }] });
       }
       await this.log.appendEntry(groupId, {
         role: "assistant",

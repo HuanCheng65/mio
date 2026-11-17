@@ -24,7 +24,8 @@ import type { GroupNames } from "./group-names";
 import { markOwnSends } from "./qq-refs";
 import { passiveReplyBlocker, recordPassiveReply } from "../platform/qq";
 import type { RecordListener } from "./recorder";
-import { AgentRuntime, loadAgentSystemPrompt, loadReminder, loadSleepPrompt } from "./runtime";
+import type { PromptStore } from "./prompts";
+import { AgentRuntime } from "./runtime";
 import { ToolRegistry, type AgentTool } from "./tools";
 
 type Logger = ReturnType<Context["logger"]>;
@@ -36,11 +37,12 @@ export interface AgentShared {
   mediaDir: string;
   listeners: RecordListener[];
   groupNames: GroupNames;
+  prompts: PromptStore;
 }
 
 /** 启动新运行时；配置不满足时说明原因并返回 false，录制等其他功能不受影响 */
 export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logger, shared: AgentShared): boolean {
-  const { groups, events, aliases, mediaDir, listeners, groupNames } = shared;
+  const { groups, events, aliases, mediaDir, listeners, groupNames, prompts } = shared;
   const agent = config.agent;
 
   const modelUses = checkAgentModels(agent, config.providers);
@@ -121,11 +123,9 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   const runtime = new AgentRuntime(log, new AgentLLM(providers), registry, {
     modelFor,
     maxSteps: agent.maxSteps,
-    systemPrompt: loadAgentSystemPrompt(agent.personaFile),
-    reminder: loadReminder(),
+    prompts: () => prompts.current(),
     isShadow: (groupId) => groups.isShadow(groupId),
     sleep: {
-      prompt: loadSleepPrompt(),
       maxSteps: agent.sleep.maxSteps,
       compactTokens: agent.sleep.compactTokens,
       minTokens: agent.sleep.minTokens,

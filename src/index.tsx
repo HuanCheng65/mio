@@ -15,6 +15,7 @@ import { extendAliasTable } from "./agent/aliases";
 import { extendLogTable } from "./agent/log-store";
 import { extendImageTables } from "./agent/image-transport";
 import { extendNoteTable } from "./agent/notes";
+import { extendPromptTable, PromptStore } from "./agent/prompts";
 import { AliasRegistry } from "./agent/aliases";
 import { tryBootstrapAgent } from "./agent/bootstrap";
 import { GroupNames } from "./agent/group-names";
@@ -26,6 +27,7 @@ import { registerTokenStats } from "./console/token-stats";
 import { ConfigService } from "./console/config-service";
 import { registerConfigListeners } from "./console/config-listeners";
 import { registerMemoryBrowser } from "./console/memory-browser";
+import { registerPromptEditor } from "./console/prompt-editor";
 
 export const name = "mio";
 export const inject = ["database"];
@@ -40,6 +42,7 @@ export function apply(ctx: Context, config: MioConfig) {
   extendLogTable(ctx);
   extendImageTables(ctx);
   extendNoteTable(ctx);
+  extendPromptTable(ctx);
   extendSentRefTable(ctx);
   extendMetaTable(ctx);
   extendTokenTable(ctx);
@@ -69,6 +72,8 @@ export function apply(ctx: Context, config: MioConfig) {
   registerGroupCommands(ctx, groups, events, logger);
   trackSentRefs(ctx, logger);
   registerMemoryBrowser(ctx, groups, groupNames);
+  const prompts = new PromptStore(ctx, config.agent.personaFile);
+  registerPromptEditor(ctx, prompts, logger);
   registerRecorder(ctx, {
     groups,
     normalizer: new MessageNormalizer(config.botName),
@@ -80,5 +85,5 @@ export function apply(ctx: Context, config: MioConfig) {
   });
 
   // Phase B — 新运行时；配置不满足时保持 Phase A 存活，等待 UI 修复。
-  tryBootstrapAgent(ctx, config, logger, { groups, events, aliases, mediaDir, listeners, groupNames });
+  tryBootstrapAgent(ctx, config, logger, { groups, events, aliases, mediaDir, listeners, groupNames, prompts });
 }

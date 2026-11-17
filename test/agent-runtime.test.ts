@@ -85,10 +85,9 @@ async function setup(
   const runtime = new AgentRuntime(log, llm as any, tools, {
     modelFor: options.modelFor ?? (() => ({ providerId: "p", modelName: "m", maxTokens: 100, cacheTtlMinutes: 240 })),
     maxSteps: options.maxSteps ?? 6,
-    systemPrompt: "SYSTEM",
-    reminder: "〔提醒〕",
+    prompts: () => ({ systemPrompt: "SYSTEM", reminder: "〔提醒〕", sleep: "〔{time} 睡前整理〕" }),
     isShadow: () => false,
-    sleep: { prompt: "〔{time} 睡前整理〕", maxSteps: 6, compactTokens: 1_000_000, minTokens: 0, tailEvents: 30, ...options.sleep },
+    sleep: { maxSteps: 6, compactTokens: 1_000_000, minTokens: 0, tailEvents: 30, ...options.sleep },
     onSegmentStart: (g) => segmentStarts.push(g),
   }, quiet);
 

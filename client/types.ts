@@ -67,3 +67,14 @@ export interface MemorySegment {
   tokens: number;
   summary: string | null;
 }
+
+export type PromptName = "persona" | "environment" | "reminder" | "sleep";
+
+export interface PromptView {
+  name: PromptName;
+  seedFile: string;
+  content: string;
+  seed: string;
+  edited: boolean;
+  updatedAt: number | null;
+}

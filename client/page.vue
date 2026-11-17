@@ -37,6 +37,7 @@
 
         <div class="workspace-body">
           <ConfigStudioPanel v-if="activeSection === 'config'" :studio="config" />
+          <PromptEditorPanel v-else-if="activeSection === 'prompts'" :editor="prompts" />
           <MemoryBrowserPanel v-else-if="activeSection === 'memory'" :memory="memory" />
           <RuntimeOverviewPanel v-else :runtime="runtime" />
         </div>
@@ -51,13 +52,16 @@ import { RefreshCw } from "lucide-vue-next";
 import { createConsoleSections, DEFAULT_CONSOLE_SECTION } from "./console-shell";
 import { useConfigStudio } from "./composables/use-config-studio";
 import { useMemoryBrowser } from "./composables/use-memory-browser";
+import { usePromptEditor } from "./composables/use-prompt-editor";
 import { useRuntimeConsole } from "./composables/use-runtime-console";
 import ConfigStudioPanel from "./components/config-studio-panel.vue";
 import ConsoleSidebar from "./components/console-sidebar.vue";
 import MemoryBrowserPanel from "./components/memory-browser-panel.vue";
+import PromptEditorPanel from "./components/prompt-editor-panel.vue";
 import RuntimeOverviewPanel from "./components/runtime-overview-panel.vue";
 
 const config = useConfigStudio();
+const prompts = usePromptEditor();
 const memory = useMemoryBrowser();
 const runtime = useRuntimeConsole();
 const sections = createConsoleSections();
@@ -83,12 +87,13 @@ function discardConfig() {
 
 /** 刷新会用服务器上的数据覆盖草稿，所以有未保存改动时先确认 */
 async function refreshAll() {
-  if (configDirty.value && !window.confirm("刷新会丢掉未保存的模型配置改动，继续？")) return;
-  await Promise.all([config.refresh(), memory.refresh(), runtime.refreshAll()]);
+  const unsaved = [configDirty.value && "模型配置", prompts.isDirty.value && "提示词"].filter(Boolean);
+  if (unsaved.length && !window.confirm(`刷新会丢掉未保存的${unsaved.join("、")}改动，继续？`)) return;
+  await Promise.all([config.refresh(), prompts.refresh(), memory.refresh(), runtime.refreshAll()]);
 }
 
 onMounted(() => {
-  void Promise.all([config.refresh(), memory.refresh(), runtime.refreshAll()]);
+  void Promise.all([config.refresh(), prompts.refresh(), memory.refresh(), runtime.refreshAll()]);
 });
 </script>
 
