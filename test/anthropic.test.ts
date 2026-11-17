@@ -28,7 +28,7 @@ function withoutCacheControl(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value, (key, v) => (key === "cache_control" ? undefined : v)));
 }
 
-test("system, tools and the conversation are converted with two 1h cache breakpoints", () => {
+test("system, tools and the conversation are converted with 1h cache breakpoints on system and the last two user turns", () => {
   const messages: ChatMessage[] = [
     { role: "user", content: [{ type: "text", text: "早" }, { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } }] },
     { role: "assistant", content: null, tool_calls: [], anthropicContent: rawTurn, promptDigest: digest },
@@ -48,7 +48,7 @@ test("system, tools and the conversation are converted with two 1h cache breakpo
     { role: "assistant", content: rawTurn },
     { role: "user", content: [
       { type: "tool_result", tool_use_id: "toolu_1", content: "记下了" },
-      { type: "tool_result", tool_use_id: "toolu_2", content: "发出去了" },
+      { type: "tool_result", tool_use_id: "toolu_2", content: "发出去了", cache_control: CACHE },
     ] },
     { role: "user", content: [{ type: "text", text: "新消息", cache_control: CACHE }] },
   ]);
@@ -74,6 +74,13 @@ test("each later request extends the previous one (ignoring where the breakpoint
     assert.deepEqual(requests[i].system, requests[i - 1].system);
     assert.deepEqual(requests[i].tools, requests[i - 1].tools);
     assert.deepEqual(requests[i].messages.slice(0, requests[i - 1].messages.length), requests[i - 1].messages);
+  }
+
+  // 每个请求最后一个断点的位置，下一个请求也在那里打了断点：新增的块再多，也能对上上次写下的缓存
+  const raw = [first, second, third].map((m) => buildAnthropicRequest([system, ...m], tools, model).messages);
+  for (let i = 1; i < raw.length; i++) {
+    const previousLast = raw[i - 1].length - 1;
+    assert.deepEqual((raw[i][previousLast].content as any[]).at(-1).cache_control, CACHE);
   }
 });
 

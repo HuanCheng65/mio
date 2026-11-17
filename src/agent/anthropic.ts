@@ -18,8 +18,8 @@ import type { ToolDefinition } from "./tools";
 /**
  * 原生 Anthropic Messages API 的请求构造和响应解析（纯函数，不碰网络）。
  *
- * 缓存是前缀匹配，顺序 tools → system → messages。两个断点：system 上一个（缓存 tools + system），
- * 最后一条 user 消息的最后一块上一个（缓存整段对话）。群里两次调用常隔 5–60 分钟，所以用 1 小时 TTL。
+ * 缓存是前缀匹配，顺序 tools → system → messages。三个断点：system 上一个（缓存 tools + system），
+ * 最后两条 user 消息的最后一块上各一个（见 addMessageBreakpoints）。群里两次调用常隔 5–60 分钟，所以用 1 小时 TTL。
  * 思考块（含签名）由 log 原样保存、原样发回，history 只追加，前面的思考块才一直有效。
  * 签名还绑定了生成它时的 system 和 tools：改了人设或工具定义，之前的思考块就会被拒（见 stripStaleThinking）。
  * 图片不在其中：每张图按第一次发出时的设置发（image-transport.ts 的 PinnedImageTransport），改配置不影响旧图。
@@ -135,6 +135,21 @@ function stripStaleThinking(messages: ChatMessage[], digest: string): ChatMessag
   });
 }
 
+/**
+ * 断点打在最后两条 user 消息的最后一块上（只管一轮的 system 消息不能带 cache_control）。
+ * 查缓存时，每个断点只往前找 20 个块。新的一批消息里图多（一张图一个块）时，最后一个断点离上次请求
+ * 写下的缓存会超过 20 块，整段就会按写入价重写。上次请求的最后一条 user 消息就是这次的倒数第二条，
+ * 在那里也打一个断点，正好对上上次写下的位置。
+ */
+function addMessageBreakpoints(out: BetaMessageParam[]): void {
+  const users = out.filter((m) => m.role === "user").slice(-2);
+  for (const message of users) {
+    const content = message.content as BetaContentBlockParam[];
+    // 换成新对象，不改动 log 里原样保存的块
+    content[content.length - 1] = { ...content[content.length - 1], cache_control: CACHE } as BetaContentBlockParam;
+  }
+}
+
 /** OpenAI 形状的消息 → Anthropic 请求。第一条必须是 system，最后一条必须是 user（不能预填 assistant）。 */
 export function buildAnthropicRequest(
   messages: (SystemMessage | ChatMessage)[],
@@ -189,11 +204,7 @@ export function buildAnthropicRequest(
   if (stray >= 0) throw new Error(`第 ${stray + 1} 条消息是说话提醒，后面紧跟着 user 消息（中间少了 assistant 回合），Anthropic 会拒绝`);
   const lastRole = roles.at(-1);
   if (lastRole !== "user" && lastRole !== "system") throw new Error("Anthropic 请求的最后一条必须是 user 消息或说话提醒（不支持 assistant 预填）");
-  // 断点打在最后一条 user 消息上：只管一轮的 system 消息不能带 cache_control
-  const lastUser = out[roles.lastIndexOf("user")];
-  const lastContent = lastUser.content as BetaContentBlockParam[];
-  // 加断点用浅拷贝，不改动 log 里原样保存的块
-  lastContent[lastContent.length - 1] = { ...lastContent[lastContent.length - 1], cache_control: CACHE } as BetaContentBlockParam;
+  addMessageBreakpoints(out);
 
   return {
     model: model.modelName,
