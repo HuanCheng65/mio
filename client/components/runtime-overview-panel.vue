@@ -102,14 +102,6 @@
     <div v-else class="empty-state">{{ emptyHint }}</div>
 
     <div class="footer-bar">
-      <div v-if="stats" class="memory-line">
-        <span class="memory-tag">记忆</span>
-        <span>Episodic {{ stats.episodic.active }} / {{ stats.episodic.archived }}</span>
-        <span class="dot">&middot;</span>
-        <span>Relational {{ stats.relational }}</span>
-        <span class="dot">&middot;</span>
-        <span>Semantic {{ stats.semantic }}</span>
-      </div>
       <button class="btn btn--subtle" type="button" @click="resetTokenStats">
         <RotateCcw :size="13" />
         <span>重置统计</span>
@@ -124,7 +116,7 @@ import { RotateCcw } from "lucide-vue-next";
 import type { RuntimeConsoleController } from "../composables/use-runtime-console";
 
 const props = defineProps<{ runtime: RuntimeConsoleController }>();
-const { stats, detailRows, formatNumber, resetTokenStats } = props.runtime;
+const { detailRows, formatNumber, resetTokenStats } = props.runtime;
 
 type RangeId = "today" | "yesterday" | "7d" | "30d" | "all";
 const dateRange = ref<RangeId>("7d");
@@ -437,28 +429,7 @@ const emptyHint = computed(() => {
 .footer-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.memory-line {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--c-text-3);
-}
-
-.memory-tag {
-  font-weight: 600;
-  color: var(--c-text-4);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.dot {
-  color: var(--c-text-4);
+  justify-content: flex-end;
 }
 
 @media (max-width: 900px) {

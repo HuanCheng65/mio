@@ -39,18 +39,4 @@ export class SearchCompressor {
     const compressed = response.content.trim();
     if (!compressed) throw new Error(`search compression for "${query}" returned empty content`);
     return compressed;
-  }
-
-  async compress(query: string, results: SearchResult[], intent: string): Promise<string> {
-    try {
-      const summary = await this.summarize(query, results, intent);
-      if (summary === null) return `你刚用手机搜了一下「${query}」，没搜到什么有用的信息。`;
-      return `（你刚用手机搜了一下「${query}」：${summary}）`;
-    } catch (error) {
-      console.error('Search compression error:', error);
-      // Fallback: concatenate titles
-      const titles = results.map(r => r.title).filter(t => t).join('、');
-      return `（你刚用手机搜了一下「${query}」：${titles || '没搜到什么有用的信息'}）`;
-    }
-  }
-}
+  }}

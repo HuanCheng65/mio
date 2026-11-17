@@ -1,7 +1,7 @@
-import { Activity, Cpu, LayoutPanelLeft, ShieldAlert } from "lucide-vue-next";
+import { Activity, Cpu } from "lucide-vue-next";
 
 export interface ConsoleSection {
-  id: "config" | "persona" | "runtime" | "maintenance";
+  id: "config" | "runtime";
   label: string;
   icon: any;
 }
@@ -16,19 +16,9 @@ export function createConsoleSections(): ConsoleSection[] {
       icon: Cpu,
     },
     {
-      id: "persona",
-      label: "人设工作区",
-      icon: LayoutPanelLeft,
-    },
-    {
       id: "runtime",
       label: "运行统计",
       icon: Activity,
-    },
-    {
-      id: "maintenance",
-      label: "维护工具",
-      icon: ShieldAlert,
     },
   ];
 }

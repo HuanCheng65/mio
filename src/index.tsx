@@ -4,7 +4,6 @@ import { } from "@koishijs/plugin-console";
 import { Config } from "./config";
 import type { Config as MioConfig } from "./config";
 import { reloadPrompts } from "./memory/prompt-manager";
-import { extendPersonaTables } from "./persona/types";
 import { extendGroupFields, GroupRegistry } from "./runtime/groups";
 import { registerGroupCommands } from "./runtime/group-commands";
 import { MessageNormalizer } from "./perception/normalizer";
@@ -25,7 +24,6 @@ import { registerConsoleShell } from "./console/shell";
 import { registerTokenStats } from "./console/token-stats";
 import { ConfigService } from "./console/config-service";
 import { registerConfigListeners } from "./console/config-listeners";
-import { tryBootstrapServices } from "./bootstrap";
 
 export const name = "mio";
 export const inject = ["database"];
@@ -34,7 +32,6 @@ export { Config };
 export function apply(ctx: Context, config: MioConfig) {
   const logger = ctx.logger("mio");
   reloadPrompts();
-  extendPersonaTables(ctx);
   extendGroupFields(ctx);
   extendEventTable(ctx);
   extendAliasTable(ctx);
@@ -78,8 +75,6 @@ export function apply(ctx: Context, config: MioConfig) {
     listeners,
   });
 
-  // Phase B + C — 服务初始化、运行时；任意守卫失败则保持 Phase A 存活，等待 UI 修复。
-  // 旧运行时（on / shadow）和新运行时（agent）各自检查各自的配置，互不影响。
-  tryBootstrapServices(ctx, config, logger, groups);
+  // Phase B — 新运行时；配置不满足时保持 Phase A 存活，等待 UI 修复。
   tryBootstrapAgent(ctx, config, logger, { groups, events, aliases, mediaDir, listeners });
 }

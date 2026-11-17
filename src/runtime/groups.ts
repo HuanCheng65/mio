@@ -5,10 +5,9 @@ import { Context } from "koishi";
  * mio 内部统一用 `${platform}:${channelId}`（即 session.cid）作为 groupId。
  *
  * - record：只录制群聊（不需要模型配置），为新运行时积累数据
- * - on / shadow：旧运行时回复 / 只推理不发送；同时也会录制
  * - agent / agent-shadow：新运行时回复 / 照常思考、记笔记、睡觉，但不往群里发；同时也会录制
  */
-export type MioGroupMode = "off" | "record" | "on" | "shadow" | "agent" | "agent-shadow";
+export type MioGroupMode = "off" | "record" | "agent" | "agent-shadow";
 
 declare module "koishi" {
   interface Channel {
@@ -81,16 +80,6 @@ export class GroupRegistry {
     return this.getMode(groupId) !== "off";
   }
 
-  /** 由旧运行时处理（回复或影子推理）的群 */
-  runsLegacyRuntime(groupId: string): boolean {
-    const mode = this.getMode(groupId);
-    return mode === "on" || mode === "shadow";
-  }
-
-  isShadow(groupId: string): boolean {
-    return this.getMode(groupId) === "shadow";
-  }
-
   /** 由新运行时处理的群 */
   runsAgent(groupId: string): boolean {
     const mode = this.getMode(groupId);
@@ -103,9 +92,5 @@ export class GroupRegistry {
 
   list(): string[] {
     return [...this.modes.keys()];
-  }
-
-  legacyGroups(): string[] {
-    return this.list().filter((g) => this.runsLegacyRuntime(g));
   }
 }

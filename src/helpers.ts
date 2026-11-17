@@ -1,9 +1,6 @@
 import { getAllEmojis, getEmojiByName } from "./emoji/lookup";
 import { ALLOWED_REACT_EMOJI_NAMES } from "./emoji/react-policy";
 import { levenshtein } from "./delivery/humanize";
-import { NormalizedMessage } from "./perception/types";
-import type { LLMResponse } from "./types/response";
-import type { Config } from "./config";
 
 export { ALLOWED_REACT_EMOJI_NAMES } from "./emoji/react-policy";
 
@@ -57,48 +54,4 @@ export function findEmoji(
     }
   }
   return best && bestDist <= maxDistance ? best : null;
-}
-
-/**
- * 检查消息是否显式触发 bot（@ 或提名字）
- */
-export function isMentioningBot(content: string, config: Config): boolean {
-  const lowerContent = content.toLowerCase();
-  const names = [config.botName, ...config.botAliases].map((n) => n.toLowerCase());
-  return names.some((name) => lowerContent.includes(name));
-}
-
-/**
- * 统计最近消息中连续的 bot 回复数
- */
-export function countTrailingBotMessages(messages: NormalizedMessage[]): number {
-  let count = 0;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].isBot) {
-      count++;
-    } else {
-      break;
-    }
-  }
-  return count;
-}
-
-/**
- * 验证 LLM 响应格式
- */
-export function validateResponse(response: LLMResponse, logger: any): void {
-  if (response.search) {
-    if (response.actions && response.actions.length > 0) {
-      logger.warn("Response has search set but non-empty actions, actions will be ignored");
-    }
-    return;
-  }
-
-  if (response.silent && response.actions && response.actions.length > 0) {
-    logger.warn(`urge=${response.urge} (silent) but non-empty actions, ignoring actions`);
-  }
-
-  if (!response.silent && (!response.actions || response.actions.length === 0)) {
-    logger.warn(`urge=${response.urge} (speak) but empty actions`);
-  }
 }

@@ -30,16 +30,6 @@
             </button>
           </template>
 
-          <button
-            v-if="activeSection === 'persona'"
-            class="btn btn--primary"
-            type="button"
-            @click="studio.openCreateDialog()"
-          >
-            <Plus :size="14" />
-            <span>新建人设</span>
-          </button>
-
           <button class="btn btn--icon" type="button" title="从服务器重新加载" aria-label="刷新" @click="refreshAll">
             <RefreshCw :size="14" />
           </button>
@@ -47,9 +37,7 @@
 
         <div class="workspace-body">
           <ConfigStudioPanel v-if="activeSection === 'config'" :studio="config" />
-          <PersonaStudioPanel v-else-if="activeSection === 'persona'" :studio="studio" />
-          <RuntimeOverviewPanel v-else-if="activeSection === 'runtime'" :runtime="runtime" />
-          <MaintenanceToolsPanel v-else :runtime="runtime" />
+          <RuntimeOverviewPanel v-else :runtime="runtime" />
         </div>
       </main>
     </div>
@@ -58,19 +46,15 @@
 
 <script lang="ts" setup>
 import { computed, onMounted, ref } from "vue";
-import { Plus, RefreshCw } from "lucide-vue-next";
+import { RefreshCw } from "lucide-vue-next";
 import { createConsoleSections, DEFAULT_CONSOLE_SECTION } from "./console-shell";
 import { useConfigStudio } from "./composables/use-config-studio";
-import { usePersonaStudio } from "./composables/use-persona-studio";
 import { useRuntimeConsole } from "./composables/use-runtime-console";
 import ConfigStudioPanel from "./components/config-studio-panel.vue";
 import ConsoleSidebar from "./components/console-sidebar.vue";
-import MaintenanceToolsPanel from "./components/maintenance-tools-panel.vue";
-import PersonaStudioPanel from "./components/persona-studio-panel.vue";
 import RuntimeOverviewPanel from "./components/runtime-overview-panel.vue";
 
 const config = useConfigStudio();
-const studio = usePersonaStudio();
 const runtime = useRuntimeConsole();
 const sections = createConsoleSections();
 const activeSection = ref(DEFAULT_CONSOLE_SECTION);
@@ -83,7 +67,6 @@ const {
   save: saveConfig,
   refresh: refreshConfig,
 } = config;
-const { isDirty: personaDirty } = studio;
 
 const activeSectionMeta = computed(() => {
   return sections.find((s) => s.id === activeSection.value) ?? sections[0];
@@ -96,13 +79,12 @@ function discardConfig() {
 
 /** 刷新会用服务器上的数据覆盖草稿，所以有未保存改动时先确认 */
 async function refreshAll() {
-  const unsaved = [configDirty.value && "模型配置", personaDirty.value && "人设内容"].filter(Boolean);
-  if (unsaved.length && !window.confirm(`刷新会丢掉未保存的${unsaved.join("、")}改动，继续？`)) return;
-  await Promise.all([config.refresh(), studio.refreshStudio(), runtime.refreshAll()]);
+  if (configDirty.value && !window.confirm("刷新会丢掉未保存的模型配置改动，继续？")) return;
+  await Promise.all([config.refresh(), runtime.refreshAll()]);
 }
 
 onMounted(() => {
-  void Promise.all([config.refresh(), studio.refreshStudio(), runtime.refreshAll()]);
+  void Promise.all([config.refresh(), runtime.refreshAll()]);
 });
 </script>
 

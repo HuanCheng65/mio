@@ -1,5 +1,4 @@
 import { Context } from 'koishi'
-import type { MioTokenUsageRow } from '../memory/tables'
 
 export interface ModelUsage {
   /** 全部输入 token，含缓存读和缓存写 */
@@ -12,19 +11,25 @@ export interface ModelUsage {
   calls: number
 }
 
-export type ConversationCacheHitSource = 'explicit' | 'implicit-only' | 'none'
+export type PurposeUsageMap = Record<string, ModelUsage>
 
-export interface ConversationCacheLogInput {
-  personaId: string
-  personaName: string
-  personaHash: string
-  cacheHitSource: ConversationCacheHitSource
+export interface MioTokenUsageRow {
+  id: number
+  date: string        // YYYY-MM-DD
+  model: string
+  promptTokens: number
+  completionTokens: number
   cachedTokens: number
-  cacheName?: string
-  phase?: 'main' | 'search'
+  cacheWriteTokens: number
+  calls: number
+  purposeStats?: PurposeUsageMap
 }
 
-export type PurposeUsageMap = Record<string, ModelUsage>
+declare module 'koishi' {
+  interface Tables {
+    'mio.token_usage': MioTokenUsageRow
+  }
+}
 
 interface BufferedUsage extends ModelUsage {
   purposeStats: PurposeUsageMap
@@ -67,26 +72,6 @@ function addUsage(target: ModelUsage, delta: ModelUsage) {
   target.cachedTokens += delta.cachedTokens
   target.cacheWriteTokens += delta.cacheWriteTokens
   target.calls += delta.calls
-}
-
-export function formatConversationCacheLog(input: ConversationCacheLogInput): string {
-  const parts = ['conversation-cache']
-
-  if (input.phase) {
-    parts.push(`phase=${input.phase}`)
-  }
-
-  parts.push(`persona=${input.personaId}`)
-  parts.push(`personaName=${input.personaName}`)
-  parts.push(`personaHash=${input.personaHash.slice(0, 8)}`)
-  parts.push(`cache=${input.cacheHitSource}`)
-  parts.push(`cachedTokens=${input.cachedTokens}`)
-
-  if (input.cacheName) {
-    parts.push(`cacheName=${input.cacheName}`)
-  }
-
-  return parts.join(' ')
 }
 
 function ensureUsage(map: Record<string, ModelUsage>, key: string): ModelUsage {

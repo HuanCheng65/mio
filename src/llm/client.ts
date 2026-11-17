@@ -20,7 +20,6 @@ export interface ChatOptions {
   signal?: AbortSignal; // 支持取消请求
   responseFormat?: "text" | "json_object"; // JSON mode 支持
   purpose?: string; // Token 用量用途标签
-  cachedContent?: string;
 }
 
 export class LLMClient {
@@ -168,10 +167,7 @@ export class LLMClient {
     }
 
     // 转换消息格式为 Gemini 格式
-    const { systemInstruction, contents: geminiContents } = this.convertToGeminiFormat(
-      messages,
-      Boolean(options?.cachedContent),
-    );
+    const { systemInstruction, contents: geminiContents } = this.convertToGeminiFormat(messages);
 
     // 构建配置
     const config: GenerateContentConfig = {
@@ -191,10 +187,6 @@ export class LLMClient {
     // 添加 JSON mode 支持（Gemini 使用 responseMimeType）
     if (responseFormat === "json_object") {
       config.responseMimeType = "application/json";
-    }
-
-    if (options?.cachedContent) {
-      config.cachedContent = options.cachedContent;
     }
 
     // 添加 AbortSignal 支持
@@ -243,13 +235,11 @@ export class LLMClient {
   }
 
   /**
-   * system 消息走 systemInstruction。但使用显式缓存时，Gemini 不允许请求再带 systemInstruction
-   * （静态前缀已作为缓存的 systemInstruction），这时 system 文本只能作为开头的 user 内容发送。
+   * system 消息走 systemInstruction。
    * 相邻同角色的消息合并成一条，避免出现连续的 user 轮次。
    */
   private convertToGeminiFormat(
     messages: ChatMessage[],
-    usesCachedContent: boolean,
   ): { systemInstruction?: string; contents: any[] } {
     const contents: any[] = [];
     const systemTexts: string[] = [];
@@ -268,11 +258,7 @@ export class LLMClient {
         if (typeof msg.content !== "string") {
           throw new Error("Gemini system message must be plain text");
         }
-        if (usesCachedContent) {
-          pushContent("user", [{ text: msg.content }]);
-        } else {
-          systemTexts.push(msg.content);
-        }
+        systemTexts.push(msg.content);
         continue;
       }
 
