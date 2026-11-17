@@ -112,16 +112,8 @@ export class ConfigService {
     }
 
     const checks: Array<[string, ModelConfig | undefined]> = [
-      ["models.chat", cfg.models?.chat],
+      ["memory.embedding", cfg.memory?.embedding],
     ];
-    if (cfg.vision?.enabled) {
-      checks.push(["models.vision", cfg.models?.vision]);
-    }
-    if (cfg.memory?.enabled) {
-      checks.push(["memory.embedding", cfg.memory.embedding]);
-      checks.push(["memory.extraction", cfg.memory.extraction]);
-      checks.push(["memory.distillation", cfg.memory.distillation]);
-    }
     if (cfg.search?.enabled) {
       checks.push(["search.compression", cfg.search.compression]);
     }

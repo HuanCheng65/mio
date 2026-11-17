@@ -62,13 +62,7 @@ export function useConfigStudio() {
     const add = (id: string | undefined) => {
       if (id) set.add(id);
     };
-    add(cfg.models?.chat?.providerId);
-    if (cfg.vision?.enabled) add(cfg.models?.vision?.providerId);
-    if (cfg.memory?.enabled) {
-      add(cfg.memory.embedding?.providerId);
-      add(cfg.memory.extraction?.providerId);
-      add(cfg.memory.distillation?.providerId);
-    }
+    add(cfg.memory?.embedding?.providerId);
     if (cfg.search?.enabled) add(cfg.search.compression?.providerId);
     add(cfg.agent?.model?.providerId);
     for (const model of Object.values(cfg.agent?.groupModels ?? {})) add(model.providerId);
@@ -230,60 +224,16 @@ export function useConfigStudio() {
     const cfg = draft.value;
     const slots: ModelSlot[] = [
       {
-        path: "models.chat",
-        label: "对话模型",
-        description: "主对话生成。",
-        kind: "chat",
-        get: () => cfg.models.chat,
-        set: (v) => {
-          cfg.models.chat = v;
-        },
-      },
-    ];
-    if (cfg.vision?.enabled) {
-      slots.push({
-        path: "models.vision",
-        label: "图片理解",
-        description: "多模态识图。",
-        kind: "chat",
-        get: () => cfg.models.vision,
-        set: (v) => {
-          cfg.models.vision = v;
-        },
-      });
-    }
-    if (cfg.memory?.enabled) {
-      slots.push({
         path: "memory.embedding",
         label: "Embedding",
-        description: "记忆向量化模型。",
+        description: "笔记向量化，用于回想和去重。",
         kind: "embedding",
         get: () => cfg.memory.embedding,
         set: (v) => {
           cfg.memory.embedding = v;
         },
-      });
-      slots.push({
-        path: "memory.extraction",
-        label: "记忆提取",
-        description: "从对话提取记忆。",
-        kind: "chat",
-        get: () => cfg.memory.extraction,
-        set: (v) => {
-          cfg.memory.extraction = v;
-        },
-      });
-      slots.push({
-        path: "memory.distillation",
-        label: "记忆蒸馏",
-        description: "每日蒸馏关系/语义。",
-        kind: "chat",
-        get: () => cfg.memory.distillation,
-        set: (v) => {
-          cfg.memory.distillation = v;
-        },
-      });
-    }
+      },
+    ];
     if (cfg.search?.enabled) {
       slots.push({
         path: "search.compression",

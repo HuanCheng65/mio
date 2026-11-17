@@ -5,35 +5,14 @@ import type { AgentModelConfig } from "./agent/models";
 export interface Config {
   botName: string;
   botAliases: string[];
-  personaFile: string;
   providers: ProviderConfig[];
-  models: {
-    chat: ModelConfig;
-    vision: ModelConfig;
-  };
-  bufferSize: number;
   debounce: {
     idleMs: number;
     minWaitMs: number;
     maxWaitMs: number;
   };
-  vision: {
-    enabled: boolean;
-  };
-  safety: {
-    maxReplyPerHour: number;
-    minCooldownMs: number;
-    maxConsecutiveReplies: number;
-  };
   memory: {
-    enabled: boolean;
     embedding: ModelConfig;
-    extraction: ModelConfig;
-    distillation: ModelConfig;
-    distillationHour: number;
-    flushIntervalMs: number;
-    maxPendingWrites: number;
-    activePoolLimit: number;
   };
   search: {
     enabled: boolean;
@@ -42,11 +21,6 @@ export interface Config {
     saucenaoApiKey: string;
     searchTimeoutMs: number;
     compression: ModelConfig;
-  };
-  sticker: {
-    enabled: boolean;
-    imageDir: string;
-    poolSize: number;
   };
   agent: {
     model: AgentModelConfig;
@@ -78,8 +52,6 @@ export const Config: Schema<Config> = Schema.object({
   botAliases: Schema.array(Schema.string())
     .default(["みお", "小澪"])
     .description("Bot 别名"),
-  personaFile: Schema.string().default("mio.md").description("人设文件名"),
-  bufferSize: Schema.number().default(50).description("消息缓冲区大小"),
 
   providers: Schema.array(
     Schema.object({
@@ -119,83 +91,17 @@ export const Config: Schema<Config> = Schema.object({
     ])
     .description("LLM 供应商配置"),
 
-  models: Schema.object({
-    chat: Schema.object({
-      providerId: Schema.string().default("deepseek").description("使用的供应商 ID"),
-      modelName: Schema.string().default("deepseek-chat").description("模型名称"),
-      temperature: Schema.number().default(0.9).description("温度参数"),
-      maxTokens: Schema.number().default(2048).description("最大 Token 数（思考模型的思考过程也计入，太小会截断 JSON）"),
-      reasoning: Schema.object({
-        mode: Schema.union(["auto", "off", "effort", "budget"] as const).description("推理模式"),
-        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const).description("Effort 等级（OpenAI / OpenRouter / DeepSeek）"),
-        budgetTokens: Schema.number().description("预算 token 数（Gemini / Qwen）"),
-      }).description("推理控制（按 dialect 翻译到具体协议）"),
-      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
-    }).description("对话生成模型"),
-    vision: Schema.object({
-      providerId: Schema.string().default("deepseek").description("使用的供应商 ID"),
-      modelName: Schema.string().default("deepseek-chat").description("多模态模型名称（如 gpt-4o-mini）"),
-      temperature: Schema.number().default(0.5).description("温度参数"),
-      maxTokens: Schema.number().default(500).description("最大 Token 数"),
-      reasoning: Schema.object({
-        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
-        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
-        budgetTokens: Schema.number(),
-      }).description("推理控制"),
-      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
-    }).description("图片理解模型"),
-  }).description("模型配置"),
-
   debounce: Schema.object({
     idleMs: Schema.number().default(5000).description("消息间隔窗口期（毫秒）"),
     minWaitMs: Schema.number().default(8000).description("基准最短等待时间（毫秒）"),
     maxWaitMs: Schema.number().default(45000).description("基准最长等待时间（毫秒）"),
   }).description("Debounce 配置"),
 
-  vision: Schema.object({
-    enabled: Schema.boolean().default(true).description("启用图片理解功能"),
-  }).description("多模态配置"),
-
-  safety: Schema.object({
-    maxReplyPerHour: Schema.number().default(25).description("每小时最多回复次数"),
-    minCooldownMs: Schema.number().default(15000).description("最小回复冷却时间（毫秒）"),
-    maxConsecutiveReplies: Schema.number().default(4).description("最多连续回复次数（之后静默）"),
-  }).description("安全兜底配置"),
-
   memory: Schema.object({
-    enabled: Schema.boolean().default(false).description("启用记忆系统"),
     embedding: Schema.object({
       providerId: Schema.string().default("openai").description("Embedding 供应商 ID"),
       modelName: Schema.string().default("text-embedding-3-small").description("Embedding 模型名称"),
     }).description("Embedding 模型配置"),
-    extraction: Schema.object({
-      providerId: Schema.string().default("deepseek").description("记忆提取供应商 ID"),
-      modelName: Schema.string().default("deepseek-chat").description("记忆提取模型名称"),
-      temperature: Schema.number().default(0.3).description("温度参数"),
-      maxTokens: Schema.number().default(800).description("最大 Token 数"),
-      reasoning: Schema.object({
-        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
-        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
-        budgetTokens: Schema.number(),
-      }).description("推理控制"),
-      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
-    }).description("记忆提取模型配置（建议用便宜模型）"),
-    distillation: Schema.object({
-      providerId: Schema.string().default("deepseek").description("蒸馏供应商 ID"),
-      modelName: Schema.string().default("deepseek-chat").description("蒸馏模型名称"),
-      temperature: Schema.number().default(0.3).description("温度参数"),
-      maxTokens: Schema.number().default(1000).description("最大 Token 数"),
-      reasoning: Schema.object({
-        mode: Schema.union(["auto", "off", "effort", "budget"] as const),
-        effort: Schema.union(["minimal", "low", "medium", "high", "max"] as const),
-        budgetTokens: Schema.number(),
-      }).description("推理控制"),
-      extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
-    }).description("蒸馏模型配置（可复用提取模型）"),
-    distillationHour: Schema.number().default(3).description("每日蒸馏时间（0-23，默认凌晨 3 点）"),
-    flushIntervalMs: Schema.number().default(300000).description("Working Memory flush 间隔（毫秒）"),
-    maxPendingWrites: Schema.number().default(20).description("最大缓冲写入数"),
-    activePoolLimit: Schema.number().default(200).description("活跃记忆池上限"),
   }).description("记忆系统配置"),
 
   search: Schema.object({
@@ -217,12 +123,6 @@ export const Config: Schema<Config> = Schema.object({
       extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
     }).description("搜索结果压缩模型配置（建议用便宜快速的模型）"),
   }).description("搜索增强配置"),
-
-  sticker: Schema.object({
-    enabled: Schema.boolean().default(true).description("启用表情包收集功能"),
-    imageDir: Schema.string().default("./data/stickers").description("表情包存储目录"),
-    poolSize: Schema.number().default(80).description("活跃池软上限"),
-  }).description("表情包系统配置"),
 
   agent: Schema.object({
     model: Schema.object({
