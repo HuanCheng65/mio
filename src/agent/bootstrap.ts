@@ -8,7 +8,7 @@ import { Debouncer } from "../pipeline/debouncer";
 import type { GroupRegistry } from "../runtime/groups";
 import { SearchService } from "../search/router";
 import type { AliasRegistry } from "./aliases";
-import type { EventStore } from "./event-store";
+import type { BanBody, EventStore } from "./event-store";
 import { createImageTransport, type ImageTransport } from "./image-transport";
 import { createFindSourceTool, createSearchTool } from "./inward-tools";
 import { AgentLLM } from "./llm";
@@ -138,6 +138,13 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   const names = [config.botName, ...config.botAliases];
   const listener: RecordListener = (groupId, session, event) => {
     if (!groups.runsAgent(groupId)) return;
+    if (event.kind === "ban") {
+      const ban = event.body as BanBody;
+      if (ban.targetIsSelf) outbox.setBanned(groupId, ban.lift ? null : ban.durationSec > 0 ? event.timestamp + ban.durationSec * 1000 : Infinity);
+      return;
+    }
+    // 表情回应只录不叫醒：下次醒来时随这批消息一起看到
+    if (event.kind !== "message") return;
     const msg = event.body as NormalizedMessage;
     outbox.noteUserMessage(groupId, session);
 

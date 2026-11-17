@@ -1,5 +1,5 @@
 import type { ImageSegment, MessageSegment, NormalizedMessage } from "../perception/types";
-import type { MioEventRow } from "./event-store";
+import type { BanBody, MioEventRow, ReactionBody, RecallBody } from "./event-store";
 
 /** log 里存的内容片段；图片只存文件名，发请求时再读成 base64，保证每次字节相同、能命中缓存 */
 export type LogPart = { type: "text"; text: string } | { type: "image"; file: string };
@@ -110,6 +110,24 @@ function renderMessage(seq: number, msg: NormalizedMessage, ctx: BatchContext): 
   return { line: `[m${seq}] ${who} ${clock(msg.timestamp)}: ${reply}${body.trimStart()}`, images };
 }
 
+/** 禁言、表情回应里的人：只有平台 ID，名字取最近见到的昵称 */
+function person(userId: string, ctx: BatchContext): string {
+  const alias = ctx.aliases.get(userId);
+  if (!alias) throw new Error(`renderBatch: no alias for user ${userId}`);
+  return `${ctx.names.get(userId) ?? "某人"}#${alias}`;
+}
+
+function renderBan(ban: BanBody, ts: number, ctx: BatchContext): string {
+  const operator = person(ban.operatorId, ctx);
+  if (ban.targetId === null) {
+    return `〔${clock(ts)} ${operator} ${ban.lift ? "解除了全员禁言" : "开启了全员禁言，你也发不出消息了"}〕`;
+  }
+  const target = ban.targetIsSelf ? "你" : person(ban.targetId, ctx);
+  if (ban.lift) return `〔${clock(ts)} ${operator} 解除了${target}的禁言〕`;
+  const minutes = Math.round(ban.durationSec / 60);
+  return `〔${clock(ts)} ${operator} 把${target}禁言了${minutes > 0 ? ` ${minutes} 分钟` : ""}〕`;
+}
+
 /**
  * 把一批事件渲染成一条 user 消息的内容。第一个片段总是文字（日期开头）。
  * 图片紧跟在发它的那一行后面并标上发送者：统一挂在末尾时，模型会按位置把图算到最后说话的人头上。
@@ -133,9 +151,20 @@ export function renderBatch(events: MioEventRow[], ctx: BatchContext): LogPart[]
 
   for (const event of events) {
     if (event.kind === "recall") {
-      const body = event.body as { recalledMessageId: string; recalledBy: string };
+      const body = event.body as RecallBody;
       const target = ctx.seqByMessageId.get(body.recalledMessageId);
       lines.push(`〔${body.recalledBy || "有人"} 撤回了${target !== undefined ? ` m${target}` : "一条消息"}〕`);
+      continue;
+    }
+    if (event.kind === "ban") {
+      lines.push(renderBan(event.body as BanBody, event.timestamp, ctx));
+      continue;
+    }
+    if (event.kind === "reaction") {
+      const body = event.body as ReactionBody;
+      const target = ctx.seqByMessageId.get(body.messageId);
+      const where = target !== undefined ? ` m${target}` : "一条消息";
+      lines.push(`〔${clock(event.timestamp)} ${person(body.userId, ctx)} ${body.add ? `给${where}贴了` : `撤掉了${where}上的`}[表情:${body.emoji}]〕`);
       continue;
     }
     const { line, images } = renderMessage(event.seq, event.body as NormalizedMessage, ctx);

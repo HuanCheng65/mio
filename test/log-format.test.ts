@@ -116,3 +116,22 @@ test("notes skipped backlog and marks the bot's own messages", () => {
 test("refuses to render a sender without an alias", () => {
   assert.throws(() => renderBatch([message(7, { senderId: "U9" })], ctx()), /no alias for sender U9/);
 });
+
+test("renders OneBot bans and reactions with aliases and [mN] targets", () => {
+  const notice = (seq: number, kind: "ban" | "reaction", body: MioEventRow["body"]): MioEventRow =>
+    ({ id: seq, groupId: "onebot:G", seq, kind, platformMessageId: "", userId: "U2", isBot: false, timestamp: T, body });
+  const parts = renderBatch([
+    notice(9, "reaction", { messageId: "p5", userId: "U2", emoji: "赞", add: true }),
+    notice(10, "reaction", { messageId: "gone", userId: "U2", emoji: "赞", add: false }),
+    notice(11, "ban", { operatorId: "U2", targetId: "U1", targetIsSelf: false, lift: false, durationSec: 600 }),
+    notice(12, "ban", { operatorId: "U2", targetId: "SELF", targetIsSelf: true, lift: true, durationSec: 0 }),
+    notice(13, "ban", { operatorId: "U2", targetId: null, targetIsSelf: true, lift: false, durationSec: 0 }),
+  ], ctx({ names: new Map([["U1", "白川"], ["U2", "Masou"]]) }));
+
+  const text = (parts[0] as { text: string }).text;
+  assert.match(text, /〔21:03 Masou#a2 给 m5贴了\[表情:赞\]〕/);
+  assert.match(text, /〔21:03 Masou#a2 撤掉了一条消息上的\[表情:赞\]〕/);
+  assert.match(text, /〔21:03 Masou#a2 把白川#a1禁言了 10 分钟〕/);
+  assert.match(text, /〔21:03 Masou#a2 解除了你的禁言〕/);
+  assert.match(text, /〔21:03 Masou#a2 开启了全员禁言，你也发不出消息了〕/);
+});

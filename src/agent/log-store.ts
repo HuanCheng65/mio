@@ -2,7 +2,7 @@ import type { BetaContentBlock } from "@anthropic-ai/sdk/resources/beta/messages
 import { $, Context } from "koishi";
 import type { NormalizedMessage } from "../perception/types";
 import type { AliasRegistry } from "./aliases";
-import type { MioEventRow } from "./event-store";
+import type { BanBody, MioEventRow, ReactionBody, RecallBody } from "./event-store";
 import type { ImagePart, ImageTransport } from "./image-transport";
 import { renderBatch, type LogPart } from "./log-format";
 import { estimateTokens, IMAGE_TOKENS } from "./tokens";
@@ -194,7 +194,25 @@ export class AgentLog {
     const referenced = new Set<string>();
     for (const event of events) {
       if (event.kind === "recall") {
-        referenced.add((event.body as { recalledMessageId: string }).recalledMessageId);
+        referenced.add((event.body as RecallBody).recalledMessageId);
+        continue;
+      }
+      if (event.kind === "ban") {
+        const ban = event.body as BanBody;
+        for (const userId of [ban.operatorId, ban.targetIsSelf ? null : ban.targetId]) {
+          if (userId === null) continue;
+          aliases.set(userId, await this.aliases.aliasOf(groupId, userId));
+          const name = await this.aliases.nameOf(groupId, userId);
+          if (name) names.set(userId, name);
+        }
+        continue;
+      }
+      if (event.kind === "reaction") {
+        const reaction = event.body as ReactionBody;
+        aliases.set(reaction.userId, await this.aliases.aliasOf(groupId, reaction.userId));
+        const name = await this.aliases.nameOf(groupId, reaction.userId);
+        if (name) names.set(reaction.userId, name);
+        referenced.add(reaction.messageId);
         continue;
       }
       const msg = event.body as NormalizedMessage;
@@ -206,7 +224,8 @@ export class AgentLog {
         const name = await this.aliases.nameOf(groupId, m.userId);
         if (name) names.set(m.userId, name);
       }
-      if (msg.replyTo) referenced.add(msg.replyTo.messageId);
+      // 没对上的官方 QQ 引用 messageId 为空；禁言和表情回应事件的 platformMessageId 也是空，不能拿空串去查
+      if (msg.replyTo?.messageId) referenced.add(msg.replyTo.messageId);
     }
 
     const seqByMessageId = new Map<string, number>();

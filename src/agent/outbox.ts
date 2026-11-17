@@ -22,6 +22,7 @@ export class Outbox {
   private sentAt = new Map<string, number[]>();
   private consecutive = new Map<string, number>();
   private own = new Map<string, string[]>();
+  private bannedUntil = new Map<string, number>();
 
   constructor(private limits: OutboxLimits) {}
 
@@ -34,8 +35,20 @@ export class Outbox {
     return this.latest.get(groupId);
   }
 
+  /** 澪在这个群被 QQ 禁言到什么时候（Infinity：直到解除）；null 表示解除 */
+  setBanned(groupId: string, until: number | null): void {
+    if (until === null) this.bannedUntil.delete(groupId);
+    else this.bannedUntil.set(groupId, until);
+  }
+
   /** 被护栏拦下时返回给模型看的说明；可以发时返回 null */
   blocker(groupId: string, now = Date.now()): string | null {
+    const banned = this.bannedUntil.get(groupId);
+    if (banned !== undefined) {
+      if (banned === Infinity) return "你在这个群被禁言了，解除之前发不出去";
+      if (now < banned) return `你在这个群被禁言了，还有 ${Math.ceil((banned - now) / 60_000)} 分钟才解除，现在发不出去`;
+      this.bannedUntil.delete(groupId);
+    }
     const recent = (this.sentAt.get(groupId) ?? []).filter((t) => now - t < HOUR);
     this.sentAt.set(groupId, recent);
     const last = recent.at(-1);

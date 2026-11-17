@@ -195,3 +195,15 @@ test("repeat refuses its own, stale, @-ing and unreplayable messages", async () 
   assert.match(await repeat.run({ message: fine }, qq), /^复读了/, "refusals do not start the cooldown");
   await app.stop();
 });
+
+test("a QQ ban on Mio blocks sending until it expires or is lifted", () => {
+  const outbox = new Outbox({ minIntervalMs: 0, maxPerHour: 99, maxConsecutive: 99 });
+  outbox.setBanned("onebot:G", 10 * 60_000);
+  assert.match(outbox.blocker("onebot:G", 0)!, /禁言了，还有 10 分钟/);
+  assert.equal(outbox.blocker("onebot:G", 10 * 60_000), null);
+
+  outbox.setBanned("onebot:G", Infinity);
+  assert.match(outbox.blocker("onebot:G", 0)!, /解除之前发不出去/);
+  outbox.setBanned("onebot:G", null);
+  assert.equal(outbox.blocker("onebot:G", 0), null);
+});
