@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   BetaContentBlock,
   BetaContentBlockParam,
@@ -8,7 +9,7 @@ import type {
   BetaTool,
   MessageCreateParamsNonStreaming,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
-import type { ModelConfig, ProviderConfig } from "../llm/provider";
+import type { ModelConfig, ProviderConfig, ProviderImageConfig } from "../llm/provider";
 import type { ChatMessage, ToolCall } from "./log-store";
 import type { SystemMessage } from "./llm";
 import type { AgentModelConfig } from "./models";
@@ -20,6 +21,7 @@ import type { ToolDefinition } from "./tools";
  * 缓存是前缀匹配，顺序 tools → system → messages。两个断点：system 上一个（缓存 tools + system），
  * 最后一条 user 消息的最后一块上一个（缓存整段对话）。群里两次调用常隔 5–60 分钟，所以用 1 小时 TTL。
  * 思考块（含签名）由 log 原样保存、原样发回，history 只追加，前面的思考块才一直有效。
+ * 签名还绑定了生成它时的前缀：改了人设、工具定义或发图设置，之前的思考块就会被拒（见 stripStaleThinking）。
  *
  * 说话提醒是只管一轮的 system 消息（clear_at: next_user_message）：之后有新的 user 消息（包括工具结果）
  * 就不再显示、不再计费，但每次都原样留在原位，前缀不变。
@@ -98,20 +100,60 @@ function rebuiltAssistantBlocks(message: Extract<ChatMessage, { role: "assistant
   return blocks;
 }
 
+function anthropicTools(tools: ToolDefinition[]): BetaTool[] {
+  return tools.map((t): BetaTool => ({
+    name: t.function.name,
+    description: t.function.description,
+    input_schema: t.function.parameters as BetaTool["input_schema"],
+  }));
+}
+
+/**
+ * 思考块签名绑定的前缀里，log 之外的那几样的指纹；随 assistant 条目存进 log。
+ * system 和 tools 直接在请求里；log 只存图的文件名，每次按发图设置变成图块，所以发图方式变了
+ * （内联 ↔ file_id），之前所有的图块都会变。缩图大小只对内联算数：file_id 按文件名查已上传的，
+ * 改了 maxPixels 旧图还是原来那个 file_id，只有新图按新尺寸上传。
+ */
+export function anthropicPromptDigest(system: string, tools: ToolDefinition[], images: ProviderImageConfig | undefined): string {
+  const imageKey = { transport: images?.transport, maxPixels: images?.transport === "inline" ? images.maxPixels : undefined };
+  return createHash("sha256").update(JSON.stringify({ system, tools: anthropicTools(tools), images: imageKey })).digest("hex");
+}
+
+const THINKING = new Set(["thinking", "redacted_thinking"]);
+
+/**
+ * 思考块的签名绑定了生成它时的前缀，之后改了人设、工具定义或发图设置再原样发回，API 会以
+ * "属于另一个对话"拒绝整个请求，而且这一段之后每次都会被拒。Sonnet 5.5 关思考（between_tools）时
+ * 不支持 block_binding 的 drop_block，只能自己去掉。
+ * API 允许从最早的开始去掉一串思考块，但不允许去掉中间的、也不允许去掉后再放回去，所以规则是：
+ * 找到最后一条指纹和现在不一样（或没有指纹）的条目，它和它之前所有条目的思考块都去掉。
+ * 之后只要这几样不再变，每次去掉的都是同一批，前缀稳定。
+ */
+function stripStaleThinking(messages: ChatMessage[], digest: string): ChatMessage[] {
+  let stale = -1;
+  messages.forEach((m, i) => {
+    if (m.role === "assistant" && m.anthropicContent && m.promptDigest !== digest) stale = i;
+  });
+  return messages.map((m, i) => {
+    if (i > stale || m.role !== "assistant" || !m.anthropicContent) return m;
+    return { ...m, anthropicContent: m.anthropicContent.filter((b) => !THINKING.has(b.type)) };
+  });
+}
+
 /** OpenAI 形状的消息 → Anthropic 请求。第一条必须是 system，最后一条必须是 user（不能预填 assistant）。 */
 export function buildAnthropicRequest(
   messages: (SystemMessage | ChatMessage)[],
   tools: ToolDefinition[],
   model: ModelConfig,
+  provider: ProviderConfig,
 ): MessageCreateParamsNonStreaming {
   const [system, ...rest] = messages;
   if (system?.role !== "system") throw new Error("Anthropic 请求的第一条消息必须是 system");
+  if (rest.some((m) => m.role === "system")) throw new Error("Anthropic 请求只支持开头一条 system 消息");
 
   const out: BetaMessageParam[] = [];
-  for (const message of rest) {
+  for (const message of stripStaleThinking(rest as ChatMessage[], anthropicPromptDigest(system.content, tools, provider.images))) {
     switch (message.role) {
-      case "system":
-        throw new Error("Anthropic 请求只支持开头一条 system 消息");
       case "reminder": {
         // 只能接在 user 消息（含工具结果）后面；后面紧跟 user 消息会被拒绝，在下面检查
         if (out.at(-1)?.role !== "user") throw new Error("说话提醒前面必须是 user 消息或工具结果");
@@ -127,7 +169,13 @@ export function buildAnthropicRequest(
           ? (message.anthropicContent as unknown as BetaContentBlockParam[])
           : rebuiltAssistantBlocks(message);
         // 什么都没说的一步：API 不接受空 content 的 assistant 消息，固定省略（每次都省略，前缀不变）
-        if (blocks.length > 0) out.push({ role: "assistant", content: blocks });
+        if (blocks.length > 0) {
+          out.push({ role: "assistant", content: blocks });
+        } else if ((out.at(-1)?.role as string) === "system") {
+          // 只有思考块的一步去掉思考块后也是空的。runtime 只给有内容的一步写提醒，所以这里的提醒是那一步的，
+          // 一起省略，否则提醒后面会紧跟 user 消息。这一步在去掉思考块的那一串里，每次都同样省略
+          out.pop();
+        }
         break;
       }
       case "tool": {
@@ -157,11 +205,7 @@ export function buildAnthropicRequest(
     model: model.modelName,
     max_tokens: model.maxTokens!,
     system: [{ type: "text", text: system.content, cache_control: CACHE } satisfies BetaTextBlockParam],
-    tools: tools.map((t): BetaTool => ({
-      name: t.function.name,
-      description: t.function.description,
-      input_schema: t.function.parameters as BetaTool["input_schema"],
-    })),
+    tools: anthropicTools(tools),
     messages: out,
     ...anthropicThinking(model),
     betas: [FALLBACK_BETA, CLEAR_AT_BETA],

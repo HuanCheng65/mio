@@ -25,6 +25,7 @@ const reply = (toolCalls: ToolCall[] = [], extra: Partial<AgentStep> = {}): Agen
   reasoning: null,
   toolCalls,
   anthropicContent: null,
+  promptDigest: null,
   usage: { promptTokens: 0, completionTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 },
   ...extra,
 });
@@ -386,7 +387,7 @@ test("raw Anthropic content survives the log and is replayed unchanged", async (
     { type: "tool_use", id: "toolu_1", name: "note", input: { text: "a" } },
   ] as any;
   const { app, log, runtime, requests, say } = await setup([
-    reply([call("toolu_1", "note", { text: "a" })], { content: "我记一下", anthropicContent: blocks }),
+    reply([call("toolu_1", "note", { text: "a" })], { content: "我记一下", anthropicContent: blocks, promptDigest: "d1" }),
     reply(),
   ]);
   await say("早");
@@ -394,8 +395,10 @@ test("raw Anthropic content survives the log and is replayed unchanged", async (
 
   const stored = (await log.entries(G))[2];
   assert.deepEqual(stored.anthropicContent, blocks);
+  assert.equal(stored.promptDigest, "d1");
   assert.equal(stored.reasoning, null);
   assert.deepEqual((requests[1][3] as any).anthropicContent, blocks);
+  assert.equal((requests[1][3] as any).promptDigest, "d1");
   assert.deepEqual((requests[1][3] as any).tool_calls, [call("toolu_1", "note", { text: "a" })]);
   await app.stop();
 });

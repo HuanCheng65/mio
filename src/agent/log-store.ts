@@ -39,6 +39,8 @@ export interface MioLogEntryRow {
    * 之后发给 Anthropic 时原样发回。content / toolCalls 同时按原有形状填好，供工具循环和 OpenAI 兼容模型使用。
    */
   anthropicContent: BetaContentBlock[] | null;
+  /** 有 anthropicContent 的条目：生成时 system、tools 和发图设置的指纹，判断其中的思考块还能不能原样发回 */
+  promptDigest: string | null;
   /** user 批次覆盖到的最后一个事件 seq */
   lastSeq: number | null;
   tokens: number;
@@ -62,6 +64,7 @@ export function extendLogTable(ctx: Context): void {
     toolCallId: { type: "string", length: 63, nullable: true },
     reasoning: { type: "text", nullable: true },
     anthropicContent: { type: "json", nullable: true },
+    promptDigest: { type: "string", length: 64, nullable: true },
     lastSeq: { type: "unsigned", nullable: true },
     tokens: "unsigned",
     createdAt: "unsigned(8)",
@@ -80,6 +83,8 @@ export type ChatMessage =
     reasoning_content?: string;
     /** 不是 OpenAI 的字段：只给 Anthropic 转换用，发给 OpenAI 兼容接口前要去掉 */
     anthropicContent?: BetaContentBlock[];
+    /** 和 anthropicContent 一起：生成时 system、tools 和发图设置的指纹（旧条目没有） */
+    promptDigest?: string;
   }
   | { role: "tool"; tool_call_id: string; content: string }
   /** 不是 OpenAI 的角色：各供应商的请求构造各自处理（Anthropic 是只管一轮的 system 消息） */
@@ -92,6 +97,7 @@ export interface NewLogEntry {
   toolCallId?: string;
   reasoning?: string | null;
   anthropicContent?: BetaContentBlock[] | null;
+  promptDigest?: string | null;
 }
 
 /** 每个群按它当前的模型用对应供应商的发图方式 */
@@ -253,6 +259,7 @@ export class AgentLog {
       reasoning: entry.reasoning ?? null,
       // 思考块的签名不算 token，不计入 tokens，免得虚高提前触发睡前整理
       anthropicContent: entry.anthropicContent ?? null,
+      promptDigest: entry.promptDigest ?? null,
       lastSeq,
       // 发过的提醒之后不再显示（Anthropic 不计费，OpenAI 兼容的请求里不发），不计入 tokens
       tokens: entry.role === "reminder" ? 0 : partsTokens(entry.content) + toolCallTokens + (entry.reasoning ? estimateTokens(entry.reasoning) : 0),
@@ -310,6 +317,7 @@ export class AgentLog {
           ...(e.toolCalls ? { tool_calls: e.toolCalls } : {}),
           ...(e.reasoning ? { reasoning_content: e.reasoning } : {}),
           ...(e.anthropicContent ? { anthropicContent: e.anthropicContent } : {}),
+          ...(e.promptDigest ? { promptDigest: e.promptDigest } : {}),
         });
       } else if (e.content.every((p) => p.type === "text")) {
         messages.push({ role: "user", content: text });

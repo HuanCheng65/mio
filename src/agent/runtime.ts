@@ -225,6 +225,7 @@ export class AgentRuntime {
         toolCalls: result.toolCalls.length > 0 ? result.toolCalls : undefined,
         reasoning: result.reasoning,
         anthropicContent: result.anthropicContent,
+        promptDigest: result.promptDigest,
       });
       if (result.toolCalls.length === 0) {
         this.logger.debug(`[${groupId}] agent 完成: 工具调用 ${toolCalls} 次, prompt ${promptTokens} tokens (缓存命中 ${cachedTokens}，缓存写入 ${cacheWriteTokens})`);
