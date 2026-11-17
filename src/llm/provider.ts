@@ -1,4 +1,5 @@
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic, { type ClientOptions } from '@anthropic-ai/sdk';
+import { fetch as undiciFetch, ProxyAgent } from 'undici';
 import OpenAI from 'openai';
 import { GoogleGenAI } from '@google/genai';
 
@@ -36,6 +37,7 @@ export interface ProviderConfig {
   extraHeaders?: Record<string, string>;     // 仅 type=openai，附加请求头
   extraBody?: Record<string, any>;           // 仅 type=openai，每次请求合入的请求体字段
   images?: ProviderImageConfig;              // type=openai / anthropic，agent 发图方式
+  proxyUrl?: string;                         // 仅 type=anthropic，经 HTTP 代理访问（服务器直连会被按地区拒绝）
 }
 
 export interface ModelConfig {
@@ -45,6 +47,19 @@ export interface ModelConfig {
   maxTokens?: number;
   reasoning?: ReasoningConfig;               // 规范化推理控制，由 LLMClient 按 (type, dialect) 翻译
   extraBody?: Record<string, any>;           // 仅本次请求合入的请求体字段
+}
+
+/**
+ * Anthropic 客户端；配了 proxyUrl 就经代理访问。代理用 undici 自己的 fetch 配它自己的 ProxyAgent：
+ * Node 内置 fetch 捆绑的 undici 版本不同，混用 dispatcher 不可靠。
+ */
+export function createAnthropicClient(config: ProviderConfig): Anthropic {
+  if (!config.proxyUrl) return new Anthropic({ apiKey: config.apiKey });
+  return new Anthropic({
+    apiKey: config.apiKey,
+    fetch: undiciFetch as unknown as typeof fetch,
+    fetchOptions: { dispatcher: new ProxyAgent(config.proxyUrl) } as unknown as ClientOptions['fetchOptions'],
+  });
 }
 
 export class ProviderManager {
@@ -60,6 +75,9 @@ export class ProviderManager {
   }
 
   addProvider(config: ProviderConfig): void {
+    if (config.proxyUrl && config.type !== 'anthropic') {
+      throw new Error(`供应商 ${config.id}: proxyUrl 目前只支持 anthropic 类型`);
+    }
     this.configs.set(config.id, config);
 
     if (config.type === 'gemini') {
@@ -69,7 +87,7 @@ export class ProviderManager {
       );
     } else if (config.type === 'anthropic') {
       // 原生 Anthropic Messages API（目前只有 agent 用）
-      this.anthropicProviders.set(config.id, new Anthropic({ apiKey: config.apiKey }));
+      this.anthropicProviders.set(config.id, createAnthropicClient(config));
     } else {
       // OpenAI-compatible
       this.openaiProviders.set(

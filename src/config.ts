@@ -100,6 +100,7 @@ export const Config: Schema<Config> = Schema.object({
         maxPixels: Schema.number().description("发送前缩到的总像素量（填供应商服务端自己的缩放目标，DeepSeek 是 1300×1300）"),
         inlineBudgetMiB: Schema.number().description("仅 inline：一段 log 的图片最多占多少请求体（MiB），超过就睡前整理"),
       }).description("agent 发图方式（type=openai / anthropic；anthropic 只支持 inline）"),
+      proxyUrl: Schema.string().description("HTTP 代理地址（仅 type=anthropic；服务器直连 Anthropic 会被按地区拒绝），如 http://127.0.0.1:7890"),
     }),
   )
     .default([
@@ -113,6 +114,7 @@ export const Config: Schema<Config> = Schema.object({
         extraHeaders: {},
         extraBody: {},
         images: { transport: "deepseek-files", maxPixels: 1300 * 1300, inlineBudgetMiB: undefined },
+        proxyUrl: undefined,
       },
     ])
     .description("LLM 供应商配置"),
