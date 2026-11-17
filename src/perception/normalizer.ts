@@ -1,6 +1,4 @@
 import { Session } from "koishi";
-import { ImageProcessor } from "../pipeline/image-processor";
-import { MessageBuffer } from "../pipeline/message-buffer";
 import { getEmojiById } from "../emoji/lookup";
 import { getGroupMemberInfo, isOneBot } from "../platform/onebot";
 import { isQQOfficial, qqRefIndexes } from "../platform/qq";
@@ -22,12 +20,9 @@ export class MessageNormalizer {
   }>();
   private static TITLE_TTL_MS = 5 * 60 * 1000;
 
-  constructor(
-    private imageProcessor: ImageProcessor | null,
-    private configBotName: string,
-  ) {}
+  constructor(private configBotName: string) {}
 
-  async normalize(session: Session, skipImageUnderstanding: boolean = false, buffer?: MessageBuffer): Promise<NormalizedMessage> {
+  async normalize(session: Session): Promise<NormalizedMessage> {
     const segments: MessageSegment[] = [];
     const mentions: MentionInfo[] = [];
     const botId = session.selfId;
@@ -35,7 +30,7 @@ export class MessageNormalizer {
     // 1. 处理 elements
     if (session.elements && session.elements.length > 0) {
       for (const el of session.elements) {
-        const result = await this.normalizeElement(el, session, skipImageUnderstanding, buffer);
+        const result = await this.normalizeElement(el, session);
         if (result.segment) segments.push(result.segment);
         if (result.mention) mentions.push(result.mention);
       }
@@ -48,7 +43,7 @@ export class MessageNormalizer {
 
     // 2. 处理引用
     const refs = isQQOfficial(session) ? qqRefIndexes(session) : {};
-    const replyTo = await this.extractReply(session, buffer);
+    const replyTo = await this.extractReply(session);
     if (replyTo && refs.quoted) replyTo.refIdx = refs.quoted;
 
     // 3. UID / 消息ID 兜底
@@ -75,8 +70,6 @@ export class MessageNormalizer {
   private async normalizeElement(
     el: any,
     session: Session,
-    skipImageUnderstanding: boolean,
-    buffer?: MessageBuffer,
   ): Promise<{ segment?: MessageSegment; mention?: MentionInfo }> {
     switch (el.type) {
       case 'text': {
@@ -92,7 +85,7 @@ export class MessageNormalizer {
         const isBot = targetId === botId;
         const displayName = isBot
           ? this.configBotName
-          : await this.resolveUserName(el, session, buffer);
+          : await this.resolveUserName(el, session);
 
         return {
           segment: { type: 'text', content: `@${displayName}` },
@@ -107,25 +100,9 @@ export class MessageNormalizer {
 
         const isSticker = this.detectSticker(el);
 
-        let description: string | null = null;
-        if (this.imageProcessor) {
-          const cached = this.imageProcessor.getCachedSync(url);
-          if (cached) {
-            description = cached;
-          } else if (skipImageUnderstanding) {
-            description = null;
-          } else {
-            // For now we set null, the outer process logic triggers ImageProcessor
-            // But per standard design, Normalizer could trigger it async itself.
-            // We'll leave it null for async update.
-            description = null; 
-          }
-        }
-
         const segment: ImageSegment = {
           type: 'image',
           url,
-          description,
           isSticker,
           width: el.attrs?.width ? Number(el.attrs.width) : undefined,
           height: el.attrs?.height ? Number(el.attrs.height) : undefined,
@@ -165,7 +142,7 @@ export class MessageNormalizer {
 
       case 'poke': {
         const target = el.attrs?.id;
-        const targetName = await this.resolveUserName(el, session, buffer);
+        const targetName = await this.resolveUserName(el, session);
         return {
           segment: {
             type: 'poke',
@@ -195,39 +172,24 @@ export class MessageNormalizer {
     }
   }
 
-  private async extractReply(session: Session, buffer?: MessageBuffer): Promise<ReplyInfo | undefined> {
+  private async extractReply(session: Session): Promise<ReplyInfo | undefined> {
     const quote = session.quote || session.event?.message?.quote;
     if (!quote) return undefined;
 
     const sender = quote.member?.nick || quote.user?.name || quote.user?.nick || '某人';
 
-    // Fast path: look up the quoted message in the buffer by ID.
-    // The buffered message already has resolved image descriptions.
-    if (buffer && quote.id) {
-      const buffered = buffer.findById(quote.id);
-      if (buffered) {
-        let preview = this.buildPreviewFromSegments(buffered.segments);
-        if (!preview && quote.content) {
-          preview = quote.content.replace(/<[^>]+>/g, '').trim();
-        }
-        if (preview.length > 40) preview = preview.slice(0, 40) + '...';
-        return { messageId: quote.id, sender, preview };
-      }
-    }
-
     // 优先走完整的 normalizeElement 管线处理 quote.elements
-    // skipImageUnderstanding=true：引用预览不需要理解图片内容，只标注 [图片]
     let preview = '';
     if (quote.elements && quote.elements.length > 0) {
       const parts: string[] = [];
       for (const el of quote.elements) {
-        const result = await this.normalizeElement(el, session, true, buffer);
+        const result = await this.normalizeElement(el, session);
         if (!result.segment) continue;
         const seg = result.segment;
         switch (seg.type) {
           case 'text':    parts.push(seg.content); break;
           case 'face':    parts.push(`[${seg.name}]`); break;
-          case 'image':   parts.push(seg.isSticker ? '[表情包]' : (seg.description ? `[图片：${seg.description}]` : '[图片]')); break;
+          case 'image':   parts.push(seg.isSticker ? '[表情包]' : '[图片]'); break;
           case 'share':   parts.push(`[分享：${seg.title}]`); break;
           case 'forward': parts.push(`[${seg.summary}]`); break;
           case 'poke':    parts.push(`[${seg.action}]`); break;
@@ -359,20 +321,9 @@ export class MessageNormalizer {
     }
   }
 
-  private async resolveUserName(el: any, session: Session, buffer?: MessageBuffer): Promise<string> {
+  private async resolveUserName(el: any, session: Session): Promise<string> {
     const targetId = el.attrs?.id;
     let name = el.attrs?.name;
-
-    // 官方 QQ 的 @ 只带 openid、没有名字，也没有查成员的接口：从最近消息里找这个人的昵称
-    if (!name && targetId && buffer && session.cid) {
-      const recent = buffer.getRecent(session.cid);
-      for (let i = recent.length - 1; i >= 0; i--) {
-        if (recent[i].senderId === targetId) {
-          name = recent[i].sender;
-          break;
-        }
-      }
-    }
 
     if (!name && targetId && session.guildId && await session.bot.supports('guild.member.get')) {
       try {
@@ -397,62 +348,6 @@ export class MessageNormalizer {
     if (url.includes('marketface') || url.includes('sticker')) return true;
 
     return false;
-  }
-
-  handleRecall(
-    recalledMsgId: string,
-    recalledByName: string,
-    buffer: MessageBuffer,
-  ): NormalizedMessage | null {
-    const original = buffer.findById(recalledMsgId);
-    if (!original) return null;
-
-    original.recalled = true;
-    original.recalledAt = Date.now();
-
-    const wasVisible = buffer.wasInRecentWindow(recalledMsgId);
-
-    const preview = wasVisible ? this.getTextPreview(original, 30) : null;
-
-    return {
-      id: `recall-${recalledMsgId}`,
-      sender: '系统',
-      senderId: 'system',
-      isBot: false,
-      isSystemEvent: true,
-      timestamp: Date.now(),
-      segments: [{
-        type: 'recall',
-        recalledBy: recalledByName,
-        originalPreview: preview,
-      }],
-      mentions: [],
-    };
-  }
-
-  private getTextPreview(msg: NormalizedMessage, maxLen: number): string {
-    const textParts = msg.segments
-      .filter((s): s is import('./types').TextSegment => s.type === 'text')
-      .map(s => s.content);
-    const full = textParts.join('');
-    return full.length > maxLen ? full.slice(0, maxLen) + '...' : full;
-  }
-
-  private buildPreviewFromSegments(segments: MessageSegment[]): string {
-    const parts: string[] = [];
-    for (const seg of segments) {
-      switch (seg.type) {
-        case 'text':    parts.push(seg.content); break;
-        case 'face':    parts.push(`[${seg.name}]`); break;
-        case 'image':   parts.push(seg.isSticker ? '[表情包]' : (seg.description ? `[图片：${seg.description}]` : '[图片]')); break;
-        case 'share':   parts.push(`[分享：${seg.title}]`); break;
-        case 'forward': parts.push(`[${seg.summary}]`); break;
-        case 'poke':    parts.push(`[${seg.action}]`); break;
-        case 'recall':  break; // system events don't belong in a quote preview
-        case 'unsupported': if (seg.hint) parts.push(seg.hint); break;
-      }
-    }
-    return parts.join('').trim();
   }
 
   private stripHtml(html: string): string {

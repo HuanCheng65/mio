@@ -159,7 +159,7 @@ test("repeat resends text, faces and saved images exactly, then cools down", asy
   const line = await addMessage(deps, { segments: [
     { type: "text", content: "以前会好奇，现在只剩<害怕>了" },
     { type: "face", faceId: 178, name: "斜眼笑" },
-    { type: "image", url: "", description: null, isSticker: true, file: "a.png" },
+    { type: "image", url: "", isSticker: true, file: "a.png" },
   ] });
   assert.match(await repeat.run({ message: line }, qq), /^复读了 m\d+$/);
   assert.equal(sent.length, 1);
@@ -181,7 +181,7 @@ test("repeat refuses its own, stale, @-ing and unreplayable messages", async () 
   const own = await addMessage(deps, { isBot: true, segments: [{ type: "text", content: "我说的" }] });
   const stale = await addMessage(deps, { timestamp: Date.now() - 6 * 60_000, segments: [{ type: "text", content: "很久以前" }] });
   const mention = await addMessage(deps, { segments: [{ type: "text", content: "你看" }], mentions: [{ userId: "X", name: "某人" } as any] });
-  const lostImage = await addMessage(deps, { segments: [{ type: "image", url: "", description: null, isSticker: false }] });
+  const lostImage = await addMessage(deps, { segments: [{ type: "image", url: "", isSticker: false }] });
   const share = await addMessage(deps, { segments: [{ type: "share", subtype: "link", title: "链接" }] });
 
   assert.match(await repeat.run({ message: own }, qq), /不复读自己/);

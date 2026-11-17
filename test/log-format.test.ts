@@ -92,10 +92,10 @@ test("places each saved image right after its message, labelled with the sender"
   const parts = renderBatch([
     message(7, { segments: [
       { type: "text", content: "看" },
-      { type: "image", url: "u1", description: null, isSticker: false, file: "a.png" },
-      { type: "image", url: "u2", description: null, isSticker: false },
+      { type: "image", url: "u1", isSticker: false, file: "a.png" },
+      { type: "image", url: "u2", isSticker: false },
     ] }),
-    message(8, { sender: "Masou", senderId: "U2", segments: [{ type: "image", url: "u3", description: null, isSticker: true, file: "s.gif" }] }),
+    message(8, { sender: "Masou", senderId: "U2", segments: [{ type: "image", url: "u3", isSticker: true, file: "s.gif" }] }),
     message(9, { segments: [{ type: "text", content: "笑死" }] }),
   ], ctx({ annotations: ["〔旁注〕"] }));
 

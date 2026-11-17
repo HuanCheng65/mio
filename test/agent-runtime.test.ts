@@ -96,7 +96,7 @@ async function setup(
   const say = (text: string, image?: string) => {
     const id = `p${++n}`;
     const segments: NormalizedMessage["segments"] = [{ type: "text", content: text }];
-    if (image) segments.push({ type: "image", url: "u", description: null, isSticker: false, file: image });
+    if (image) segments.push({ type: "image", url: "u", isSticker: false, file: image });
     const msg: NormalizedMessage = { id, sender: "小林", senderId: "U1", isBot: false, timestamp: Date.now(), segments, mentions: [] };
     return events.append(G, async () => ({ kind: "message", platformMessageId: id, userId: "U1", isBot: false, timestamp: msg.timestamp, body: msg }));
   };

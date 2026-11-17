@@ -63,7 +63,7 @@ export function registerRecorder(
     if (!groups.isRecorded(groupId)) return;
 
     const event = await events.append(groupId, async () => {
-      const msg = await normalizer.normalize(session, true);
+      const msg = await normalizer.normalize(session);
       await saveImages(groupId, msg.segments);
       await resolveQQReply(ctx, events, groupId, msg, botName);
       return {

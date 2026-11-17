@@ -99,7 +99,7 @@ test("person summarizes activity, impressions and notes", async () => {
 
 test("stickers are collected from a message's saved image and found by feeling", async () => {
   const { app, deps, remember, say } = await setup();
-  await say("U1", "", { segments: [{ type: "image", url: "u", description: null, isSticker: true, file: "cat.gif" }] });
+  await say("U1", "", { segments: [{ type: "image", url: "u", isSticker: true, file: "cat.gif" }] });
   assert.equal(await remember.run({ kind: "表情包", title: "憋笑 猫", message: "m1" }, ctx), "记下了 #n1");
 
   const finder = createStickerFinder(app, deps.notes, "/media");

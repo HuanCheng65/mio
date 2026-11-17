@@ -15,7 +15,7 @@ const session = (elements: h[]) => ({
 }) as unknown as Session;
 
 test("names official QQ emoji elements instead of reporting them as unknown", async () => {
-  const normalizer = new MessageNormalizer(null, "澪");
+  const normalizer = new MessageNormalizer("澪");
   const msg = await normalizer.normalize(session([
     h("emoji", { id: "1", name: "/流泪" }),
     h("emoji", { name: "" }),

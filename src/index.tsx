@@ -67,7 +67,7 @@ export function apply(ctx: Context, config: MioConfig) {
   trackSentRefs(ctx, logger);
   registerRecorder(ctx, {
     groups,
-    normalizer: new MessageNormalizer(null, config.botName),
+    normalizer: new MessageNormalizer(config.botName),
     events,
     media: new MediaStore(mediaDir),
     logger,

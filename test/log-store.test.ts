@@ -99,7 +99,7 @@ test("a backlog that waited over an hour says from when on she missed the chat",
 test("serializes images identically every time so the prefix stays cacheable", async () => {
   const { app, log, say, mediaDir } = await setup();
   writeFileSync(join(mediaDir, "a.png"), await new Jimp({ width: 4, height: 4, color: 0xff0000ff }).getBuffer("image/png"));
-  await say("U1", "看", { segments: [{ type: "image", url: "u", description: null, isSticker: false, file: "a.png" }] });
+  await say("U1", "看", { segments: [{ type: "image", url: "u", isSticker: false, file: "a.png" }] });
   await log.appendPendingBatch(G);
   await log.appendEntry(G, { role: "assistant", content: [], toolCalls: [{ id: "c1", type: "function", function: { name: "say", arguments: "{}" } }] });
   await log.appendEntry(G, { role: "tool", content: [{ type: "text", text: "ok" }], toolCallId: "c1" });

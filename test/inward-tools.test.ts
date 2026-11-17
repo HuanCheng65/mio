@@ -48,8 +48,8 @@ test("find_source searches the saved image of a message", async () => {
   const body: NormalizedMessage = {
     id: "p1", sender: "小林", senderId: "U1", isBot: false, timestamp: Date.now(), mentions: [],
     segments: [
-      { type: "image", url: "u1", description: null, isSticker: false },
-      { type: "image", url: "u2", description: null, isSticker: false, file: "b.png" },
+      { type: "image", url: "u1", isSticker: false },
+      { type: "image", url: "u2", isSticker: false, file: "b.png" },
     ],
   };
   await events.append(G, async () => ({ kind: "message", platformMessageId: "p1", userId: "U1", isBot: false, timestamp: body.timestamp, body }));

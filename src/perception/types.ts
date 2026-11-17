@@ -12,11 +12,6 @@ export interface NormalizedMessage {
   replyTo?: ReplyInfo;           // 引用回复
   mentions: MentionInfo[];       // 所有 @
 
-  reactions?: ReactionInfo[];    // 消息的 reaction
-  recalled?: boolean;            // 是否已被撤回
-  recalledAt?: number;           // 撤回时间
-  isSystemEvent?: boolean;       // true for recall/ban/unban notices — renderer omits sender prefix
-
   rawContent?: string;           // 原始 Koishi session.content（保留作为备份）
   refIdx?: string;               // 官方 QQ：这条消息自己的引用索引（msg_idx），别人引用它时用这个指回来
 }
@@ -27,10 +22,8 @@ export type MessageSegment =
   | FaceSegment
   | ShareSegment
   | ForwardSegment
-  | RecallNotice
   | PokeSegment
-  | UnsupportedSegment
-  | NoticeSegment;
+  | UnsupportedSegment;
 
 export interface TextSegment {
   type: 'text';
@@ -40,7 +33,6 @@ export interface TextSegment {
 export interface ImageSegment {
   type: 'image';
   url: string;
-  description: string | null;  // LLM 理解结果，null = 尚未处理
   isSticker: boolean;
   width?: number;
   height?: number;
@@ -67,12 +59,6 @@ export interface ForwardSegment {
   summary: string;
 }
 
-export interface RecallNotice {
-  type: 'recall';
-  recalledBy: string;
-  originalPreview: string | null;
-}
-
 export interface PokeSegment {
   type: 'poke';
   target: string;
@@ -82,11 +68,6 @@ export interface PokeSegment {
 export interface UnsupportedSegment {
   type: 'unsupported';
   hint: string;
-}
-
-export interface NoticeSegment {
-  type: 'notice';
-  content: string;
 }
 
 export interface ReplyInfo {
@@ -103,11 +84,4 @@ export interface MentionInfo {
   userId: string;
   displayName: string;
   isBot: boolean;
-}
-
-export interface ReactionInfo {
-  emoji: string;
-  count: number;
-  includesBot: boolean;
-  reactors: string[];
 }

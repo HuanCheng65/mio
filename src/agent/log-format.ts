@@ -47,11 +47,8 @@ function renderSegment(seg: MessageSegment): string {
       return `[${seg.summary}]`;
     case "poke":
       return `[${seg.action} ${seg.target}]`;
-    case "notice":
-      return seg.content;
     case "unsupported":
       return seg.hint;
-    case "recall":
     case "image":
       return "";
   }
