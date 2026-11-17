@@ -16,6 +16,8 @@ export interface BatchContext {
   groupName?: string;
   /** 因积压过多而没有渲染的更早事件数 */
   skipped?: number;
+  /** 这批消息等了很久才被看到（那段时间没在看群）：最早一条的时间和积压的总条数 */
+  late?: { since: number; total: number };
   /** 附在这一批末尾的旁注（人物卡片、隐约记得等） */
   annotations?: string[];
 }
@@ -116,7 +118,14 @@ export function renderBatch(events: MioEventRow[], ctx: BatchContext): LogPart[]
   if (events.length === 0) throw new Error("renderBatch: empty batch");
   const parts: LogPart[] = [];
   let lines: string[] = [dateHeader(events[0].timestamp, ctx.groupName)];
-  if (ctx.skipped) lines.push(`〔之前还有 ${ctx.skipped} 条消息没看到〕`);
+  if (ctx.late) {
+    // 只说哪些消息现在才看到，不说程序停了多久：消息记录里看不出来，群里没人说话的那段也无所谓
+    const since = `${dateHeader(ctx.late.since).slice(1, 6)} ${clock(ctx.late.since)}`;
+    const shown = ctx.skipped ? `，下面只有最近 ${events.length} 条` : "";
+    lines.push(`〔你有一阵没在看群：${since} 那条起的 ${ctx.late.total} 条消息现在才看到${shown}〕`);
+  } else if (ctx.skipped) {
+    lines.push(`〔之前还有 ${ctx.skipped} 条消息没看到〕`);
+  }
   const flush = () => {
     if (lines.length > 0) parts.push({ type: "text", text: lines.join("\n") });
     lines = [];

@@ -107,6 +107,12 @@ export interface GroupImages {
   all: ImageTransport[];
 }
 
+/**
+ * 一批里最早的消息等了这么久才被看到，就说明那段时间她没在看群（卡住、每次唤醒都失败、没启动）。
+ * 正常时消息到了几十秒内就会唤醒；排在睡前整理或上一次唤醒后面也只是几分钟，一小时不会误报。
+ */
+const LATE_MS = 60 * 60_000;
+
 function partsTokens(parts: LogPart[]): number {
   return parts.reduce((sum, p) => sum + (p.type === "text" ? estimateTokens(p.text) : IMAGE_TOKENS), 0);
 }
@@ -157,7 +163,8 @@ export class AgentLog {
 
       const skipped = Math.max(0, pending.length - this.options.maxBatchEvents);
       const events = pending.slice(skipped) as MioEventRow[];
-      const content = await this.render(groupId, events, { skipped, annotate: true });
+      const late = Date.now() - pending[0].timestamp >= LATE_MS ? { since: pending[0].timestamp, total: pending.length } : undefined;
+      const content = await this.render(groupId, events, { skipped, late, annotate: true });
       return this.create(groupId, { role: "user", content }, events[events.length - 1].seq);
     });
   }
@@ -181,7 +188,7 @@ export class AgentLog {
     });
   }
 
-  private async render(groupId: string, events: MioEventRow[], options: { skipped: number; annotate: boolean }): Promise<LogPart[]> {
+  private async render(groupId: string, events: MioEventRow[], options: { skipped: number; late?: { since: number; total: number }; annotate: boolean }): Promise<LogPart[]> {
     const aliases = new Map<string, string>();
     const names = new Map<string, string>();
     const referenced = new Set<string>();
@@ -210,7 +217,7 @@ export class AgentLog {
 
     const annotations = options.annotate && this.options.annotate ? await this.options.annotate(groupId, events) : [];
     const groupName = await this.options.groupName?.(groupId);
-    return renderBatch(events, { aliases, names, seqByMessageId, botName: this.options.botName, groupName, skipped: options.skipped, annotations });
+    return renderBatch(events, { aliases, names, seqByMessageId, botName: this.options.botName, groupName, skipped: options.skipped, late: options.late, annotations });
   }
 
   /** 追加 assistant / tool 条目（agent 循环使用） */

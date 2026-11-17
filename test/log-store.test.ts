@@ -81,6 +81,21 @@ test("caps a long backlog and says how much was skipped", async () => {
   await app.stop();
 });
 
+test("a backlog that waited over an hour says from when on she missed the chat", async () => {
+  const { app, log, say } = await setup(2);
+  const hoursAgo = (h: number) => Date.now() - h * 3600_000;
+  for (const [t, h] of [["一", 30], ["二", 2], ["三", 0.5], ["四", 0]] as const) await say("U1", t, { timestamp: hoursAgo(h) });
+  const since = new Date(hoursAgo(30));
+  const at = `${String(since.getMonth() + 1).padStart(2, "0")}-${String(since.getDate()).padStart(2, "0")} ${String(since.getHours()).padStart(2, "0")}:${String(since.getMinutes()).padStart(2, "0")}`;
+  const entry = await log.appendPendingBatch(G);
+  assert.match(textOf(entry!), new RegExp(`〔你有一阵没在看群：${at} 那条起的 4 条消息现在才看到，下面只有最近 2 条〕\\n\\[m3\\]`));
+
+  // 刚到的消息不算
+  await say("U1", "五");
+  assert.doesNotMatch(textOf((await log.appendPendingBatch(G))!), /没在看群|没看到/);
+  await app.stop();
+});
+
 test("serializes images identically every time so the prefix stays cacheable", async () => {
   const { app, log, say, mediaDir } = await setup();
   writeFileSync(join(mediaDir, "a.png"), await new Jimp({ width: 4, height: 4, color: 0xff0000ff }).getBuffer("image/png"));
