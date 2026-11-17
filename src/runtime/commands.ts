@@ -1,5 +1,4 @@
 import { reloadPrompts } from "../memory/prompt-manager";
-import { tokenTracker } from "../llm/token-tracker";
 import type { RuntimeDeps, RuntimeState } from "./types";
 
 export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): void {
@@ -53,19 +52,5 @@ export function registerAdminCommands(deps: RuntimeDeps, state: RuntimeState): v
     state.botMutedGroups.delete(groupId);
     logger.info(`[admin] 解除群 ${groupId} 静默`);
     return `已解除群 ${groupId} 的静默`;
-  });
-
-  ctx.command("mio.tokens", "查看 token 用量", { authority: 4 }).action(async () => {
-    const stats = await tokenTracker.getStats();
-    const lines: string[] = [];
-
-    lines.push(`总调用: ${stats.totalCalls} 次`);
-    lines.push(`总量: ${stats.totalPromptTokens} prompt + ${stats.totalCompletionTokens} completion (cached: ${stats.totalCachedTokens}, cache write: ${stats.totalCacheWriteTokens})`);
-
-    for (const [model, usage] of Object.entries(stats.byModel)) {
-      lines.push(`  ${model}: ${usage.promptTokens}p + ${usage.completionTokens}c (cached: ${usage.cachedTokens}, cache write: ${usage.cacheWriteTokens}), ${usage.calls} 次`);
-    }
-
-    return lines.join("\n");
   });
 }

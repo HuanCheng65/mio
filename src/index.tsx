@@ -22,6 +22,7 @@ import type { RecordListener } from "./agent/recorder";
 import { extendTokenTable, tokenTracker } from "./llm/token-tracker";
 import { extendMetaTable } from "./memory/embedding";
 import { registerConsoleShell } from "./console/shell";
+import { registerTokenStats } from "./console/token-stats";
 import { ConfigService } from "./console/config-service";
 import { registerConfigListeners } from "./console/config-listeners";
 import { tryBootstrapServices } from "./bootstrap";
@@ -44,8 +45,9 @@ export function apply(ctx: Context, config: MioConfig) {
   extendMetaTable(ctx);
   extendTokenTable(ctx);
 
-  // token 用量统计是新旧运行时共用的，不依赖哪个运行时能否启动
+  // token 用量统计不依赖运行时能否启动
   tokenTracker.init(ctx);
+  registerTokenStats(ctx);
   const tokenFlushInterval = setInterval(() => tokenTracker.flush(), 60_000);
   ctx.on("dispose", async () => {
     clearInterval(tokenFlushInterval);

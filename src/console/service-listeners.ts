@@ -1,6 +1,5 @@
 import { Context } from "koishi";
 import { MemoryService } from "../memory";
-import { tokenTracker, TokenStats } from "../llm/token-tracker";
 import { PersonaService } from "../persona/service";
 import { GeminiCacheManager } from "../llm/gemini-cache";
 
@@ -15,8 +14,6 @@ declare module "@koishijs/plugin-console" {
     "mio/trigger-distillation"(): Promise<string>;
     "mio/flush-memory"(): Promise<string>;
     "mio/migrate-participants"(): Promise<string>;
-    "mio/token-stats"(): Promise<TokenStats>;
-    "mio/token-stats-reset"(): Promise<string>;
     "mio/persona-list"(): Promise<any[]>;
     "mio/persona-get"(personaId: string): Promise<any>;
     "mio/persona-create"(input: { name: string; content: string }): Promise<any>;
@@ -196,15 +193,6 @@ export function registerServiceListeners(
         logger.error("迁移失败:", err);
         throw err;
       }
-    });
-
-    ctx.console.addListener("mio/token-stats", () => {
-      return tokenTracker.getStats();
-    });
-
-    ctx.console.addListener("mio/token-stats-reset", async () => {
-      await tokenTracker.reset();
-      return "统计已重置";
     });
 
     if (!personaService) {
