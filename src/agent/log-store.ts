@@ -39,7 +39,7 @@ export interface MioLogEntryRow {
    * 之后发给 Anthropic 时原样发回。content / toolCalls 同时按原有形状填好，供工具循环和 OpenAI 兼容模型使用。
    */
   anthropicContent: BetaContentBlock[] | null;
-  /** 有 anthropicContent 的条目：生成时 system、tools 和发图设置的指纹，判断其中的思考块还能不能原样发回 */
+  /** 有 anthropicContent 的条目：生成时 system 和 tools 的指纹，判断其中的思考块还能不能原样发回 */
   promptDigest: string | null;
   /** user 批次覆盖到的最后一个事件 seq */
   lastSeq: number | null;
@@ -83,7 +83,7 @@ export type ChatMessage =
     reasoning_content?: string;
     /** 不是 OpenAI 的字段：只给 Anthropic 转换用，发给 OpenAI 兼容接口前要去掉 */
     anthropicContent?: BetaContentBlock[];
-    /** 和 anthropicContent 一起：生成时 system、tools 和发图设置的指纹（旧条目没有） */
+    /** 和 anthropicContent 一起：生成时 system 和 tools 的指纹（旧条目没有） */
     promptDigest?: string;
   }
   | { role: "tool"; tool_call_id: string; content: string }

@@ -5,7 +5,7 @@ import { Context } from "koishi";
 import Anthropic, { toFile as toAnthropicFile } from "@anthropic-ai/sdk";
 import OpenAI, { toFile } from "openai";
 import sharp from "sharp";
-import type { ProviderConfig } from "../llm/provider";
+import type { ImageTransportKind, ProviderConfig } from "../llm/provider";
 
 /**
  * 请求里的一张图：内联 data URL，或 Files API 的引用（DeepSeek 的写法，file_id 和 type 平级；
@@ -78,26 +78,6 @@ export class ImageFitter {
   }
 }
 
-/** 每一步都把图以 base64 随请求发出去。请求体随图片数量增长，所以要有预算。 */
-export class InlineImageTransport implements ImageTransport {
-  constructor(private fitter: ImageFitter, private budgetBytes: number) {}
-
-  async part(file: string): Promise<ImagePart> {
-    const data = await readFile(await this.fitter.path(file));
-    return { type: "image_url", image_url: { url: `data:${mimeOf(file)};base64,${data.toString("base64")}` } };
-  }
-
-  async overBudget(files: string[]): Promise<boolean> {
-    let total = 0;
-    for (const file of files) total += Math.ceil((await stat(await this.fitter.path(file))).size / 3) * 4;
-    return total > this.budgetBytes;
-  }
-
-  async release(): Promise<number> {
-    return 0;
-  }
-}
-
 export interface FileUploader {
   upload(data: Buffer, name: string): Promise<string>;
   remove(fileId: string): Promise<void>;
@@ -132,10 +112,20 @@ export interface UploadedImageRow {
 declare module "koishi" {
   interface Tables {
     "mio.uploaded_image": UploadedImageRow;
+    "mio.image_pin": ImagePinRow;
   }
 }
 
-export function extendUploadedImageTable(ctx: Context): void {
+export function extendImageTables(ctx: Context): void {
+  ctx.model.extend("mio.image_pin", {
+    providerId: "string(63)",
+    file: "string(127)",
+    transport: "string(31)",
+    maxPixels: "unsigned(8)",
+    createdAt: "unsigned(8)",
+  }, {
+    primary: ["providerId", "file"],
+  });
   ctx.model.extend("mio.uploaded_image", {
     providerId: "string(63)",
     file: "string(127)",
@@ -147,22 +137,27 @@ export function extendUploadedImageTable(ctx: Context): void {
 }
 
 /**
- * 每张图经供应商的 Files API 上传一次，请求里只带 file_id，请求体不再随图片数量增长。
+ * 一个供应商经 Files API 上传过的图：每张图上传一次，请求里只带 file_id，请求体不再随图片数量增长。
  * 不设有效期（DeepSeek 和 Anthropic 默认都永久保存），不再被任何群当前段引用的图在开新段后删掉，
  * 免得撞上账号的文件数或存储上限。
  */
-export class FilesApiTransport implements ImageTransport {
+export class UploadedImages {
   private known = new Map<string, string>();
   private pending = new Map<string, Promise<string>>();
 
-  constructor(private ctx: Context, private providerId: string, private uploader: FileUploader, private fitter: ImageFitter) {}
+  constructor(private ctx: Context, private providerId: string, private uploader: FileUploader) {}
 
-  async part(file: string): Promise<ImagePart> {
-    return { type: "file", file_id: await this.fileId(file) };
-  }
-
-  async overBudget(): Promise<boolean> {
-    return false;
+  /** path：还没传过时，要上传的那份（缩好的）图在哪 */
+  fileId(file: string, path: () => Promise<string>): Promise<string> {
+    const known = this.known.get(file);
+    if (known) return Promise.resolve(known);
+    // 两个群同时用到同一张图时只传一次
+    let task = this.pending.get(file);
+    if (!task) {
+      task = this.lookupOrUpload(file, path).finally(() => this.pending.delete(file));
+      this.pending.set(file, task);
+    }
+    return task;
   }
 
   async release(keep: Set<string>, before: number): Promise<number> {
@@ -178,24 +173,12 @@ export class FilesApiTransport implements ImageTransport {
     return released;
   }
 
-  private fileId(file: string): Promise<string> {
-    const known = this.known.get(file);
-    if (known) return Promise.resolve(known);
-    // 两个群同时用到同一张图时只传一次
-    let task = this.pending.get(file);
-    if (!task) {
-      task = this.lookupOrUpload(file).finally(() => this.pending.delete(file));
-      this.pending.set(file, task);
-    }
-    return task;
-  }
-
-  private async lookupOrUpload(file: string): Promise<string> {
+  private async lookupOrUpload(file: string, path: () => Promise<string>): Promise<string> {
     const [row] = await this.ctx.database.get("mio.uploaded_image", { providerId: this.providerId, file });
     let fileId = row?.fileId;
     if (!fileId) {
-      const path = await this.fitter.path(file);
-      fileId = await this.uploader.upload(await readFile(path), basename(path));
+      const fitted = await path();
+      fileId = await this.uploader.upload(await readFile(fitted), basename(fitted));
       // 传完立刻记下：唤醒中途失败，下次从没传的那张接着传
       await this.ctx.database.create("mio.uploaded_image", { providerId: this.providerId, file, fileId, createdAt: Date.now() });
     }
@@ -204,28 +187,146 @@ export class FilesApiTransport implements ImageTransport {
   }
 }
 
+/** 一张图第一次发给某个供应商时用的发图设置；之后这张图发给它都按这个来 */
+export interface ImagePinRow {
+  providerId: string;
+  file: string;
+  transport: ImageTransportKind;
+  maxPixels: number;
+  createdAt: number;
+}
+
+type Pin = Pick<ImagePinRow, "transport" | "maxPixels">;
+
 /** 供应商对应的客户端：OpenAI 兼容的供应商只有 openai，anthropic 的只有 anthropic */
 export interface ProviderClients {
   openai?: OpenAI;
   anthropic?: Anthropic;
 }
 
-/** 按供应商配置选发图方式；配置不全或和供应商类型不配时返回原因 */
+/**
+ * 一个供应商的发图。每张图第一次发给它时，把当时的发图设置（方式、缩图大小）记进 mio.image_pin，
+ * 之后这张图一直按记下的发，所以改发图配置只影响还没发过的图：已经发过的图块一个字节都不变，
+ * 缓存和思考块签名都不受影响。图被释放（不再有群的当前段引用）时，记录一起删掉。
+ */
+export class PinnedImageTransport implements ImageTransport {
+  private pins = new Map<string, Pin>();
+  private pending = new Map<string, Promise<Pin>>();
+  private fitters = new Map<number, ImageFitter>();
+  private uploads: UploadedImages | undefined;
+
+  constructor(
+    private ctx: Context,
+    private provider: ProviderConfig,
+    private clients: ProviderClients,
+    private mediaDir: string,
+    /** 新图用的设置（当前配置） */
+    private current: Pin,
+    /** 当前配置是内联时的预算（字节） */
+    private inlineBudgetBytes: number | undefined,
+  ) {}
+
+  async part(file: string): Promise<ImagePart> {
+    const pin = await this.pin(file);
+    const fitter = this.fitter(pin.maxPixels);
+    if (pin.transport === "inline") {
+      const data = await readFile(await fitter.path(file));
+      return { type: "image_url", image_url: { url: `data:${mimeOf(file)};base64,${data.toString("base64")}` } };
+    }
+    return { type: "file", file_id: await this.uploaded().fileId(file, () => fitter.path(file)) };
+  }
+
+  /**
+   * 只有当前配置是内联时才可能超：用 Files API 时新图不再占请求体，之前内联发过的图不会再变多。
+   * 按每张图记下的方式算，还没发过的图按当前配置算；只读，不记新的设置。
+   */
+  async overBudget(files: string[]): Promise<boolean> {
+    if (this.current.transport !== "inline") return false;
+    let total = 0;
+    for (const file of files) {
+      const pin = this.pins.get(file) ?? (await this.storedPin(file)) ?? this.current;
+      if (pin.transport !== "inline") continue;
+      total += Math.ceil((await stat(await this.fitter(pin.maxPixels).path(file))).size / 3) * 4;
+    }
+    return total > this.inlineBudgetBytes!;
+  }
+
+  async release(keep: Set<string>, before: number): Promise<number> {
+    // 当前配置不是 Files API 也可能有以前上传的图要删
+    const uploaded = await this.ctx.database.get("mio.uploaded_image", { providerId: this.provider.id }, { limit: 1 });
+    const released = uploaded.length > 0 ? await this.uploaded().release(keep, before) : 0;
+    const rows = await this.ctx.database.get("mio.image_pin", { providerId: this.provider.id, createdAt: { $lt: before } }, ["file"]);
+    for (const { file } of rows) {
+      if (keep.has(file)) continue;
+      await this.ctx.database.remove("mio.image_pin", { providerId: this.provider.id, file });
+      this.pins.delete(file);
+    }
+    return released;
+  }
+
+  private pin(file: string): Promise<Pin> {
+    const known = this.pins.get(file);
+    if (known) return Promise.resolve(known);
+    let task = this.pending.get(file);
+    if (!task) {
+      task = this.lookupOrPin(file).finally(() => this.pending.delete(file));
+      this.pending.set(file, task);
+    }
+    return task;
+  }
+
+  private async lookupOrPin(file: string): Promise<Pin> {
+    let pin = await this.storedPin(file);
+    if (!pin) {
+      pin = { ...this.current };
+      await this.ctx.database.create("mio.image_pin", { providerId: this.provider.id, file, ...pin, createdAt: Date.now() });
+    }
+    this.pins.set(file, pin);
+    return pin;
+  }
+
+  private async storedPin(file: string): Promise<Pin | undefined> {
+    const [row] = await this.ctx.database.get("mio.image_pin", { providerId: this.provider.id, file });
+    return row ? { transport: row.transport, maxPixels: row.maxPixels } : undefined;
+  }
+
+  private fitter(maxPixels: number): ImageFitter {
+    let fitter = this.fitters.get(maxPixels);
+    if (!fitter) {
+      fitter = new ImageFitter(this.mediaDir, maxPixels);
+      this.fitters.set(maxPixels, fitter);
+    }
+    return fitter;
+  }
+
+  /** 记下的方式是 Files API 时用；一个供应商只有一种 Files API（按供应商类型），和当前配置无关 */
+  private uploaded(): UploadedImages {
+    if (!this.uploads) {
+      const uploader = filesUploader(this.provider.type === "anthropic" ? "anthropic-files" : "deepseek-files", this.clients);
+      if (typeof uploader === "string") throw new Error(`供应商 ${this.provider.id}: ${uploader}`);
+      this.uploads = new UploadedImages(this.ctx, this.provider.id, uploader);
+    }
+    return this.uploads;
+  }
+}
+
+function filesUploader(transport: "deepseek-files" | "anthropic-files", clients: ProviderClients): FileUploader | string {
+  if (transport === "deepseek-files") return clients.openai ? openAIUploader(clients.openai) : "不是 OpenAI 兼容的，不能用 deepseek-files 发图";
+  return clients.anthropic ? anthropicUploader(clients.anthropic) : "不是 anthropic，不能用 anthropic-files 发图";
+}
+
+/** 按供应商的发图配置建它的发图方式；配置不全或和供应商类型不配时返回原因 */
 export function createImageTransport(ctx: Context, provider: ProviderConfig, clients: ProviderClients, mediaDir: string): ImageTransport | string {
   const images = provider.images;
   if (!images?.transport || !images.maxPixels) {
     return `agent 模型的供应商 ${provider.id} 没有配置发图方式（images.transport / images.maxPixels），新运行时未启动`;
   }
-  const fitter = new ImageFitter(mediaDir, images.maxPixels);
-  switch (images.transport) {
-    case "deepseek-files":
-      if (!clients.openai) return `供应商 ${provider.id} 不是 OpenAI 兼容的，不能用 deepseek-files 发图，新运行时未启动`;
-      return new FilesApiTransport(ctx, provider.id, openAIUploader(clients.openai), fitter);
-    case "anthropic-files":
-      if (!clients.anthropic) return `供应商 ${provider.id} 不是 anthropic，不能用 anthropic-files 发图，新运行时未启动`;
-      return new FilesApiTransport(ctx, provider.id, anthropicUploader(clients.anthropic), fitter);
-    case "inline":
-      if (!images.inlineBudgetMiB) return `供应商 ${provider.id} 用内联发图，需要配置 images.inlineBudgetMiB，新运行时未启动`;
-      return new InlineImageTransport(fitter, images.inlineBudgetMiB * 2 ** 20);
+  if (images.transport === "inline") {
+    if (!images.inlineBudgetMiB) return `供应商 ${provider.id} 用内联发图，需要配置 images.inlineBudgetMiB，新运行时未启动`;
+  } else {
+    const uploader = filesUploader(images.transport, clients);
+    if (typeof uploader === "string") return `供应商 ${provider.id} ${uploader}，新运行时未启动`;
   }
+  const budget = images.transport === "inline" ? images.inlineBudgetMiB! * 2 ** 20 : undefined;
+  return new PinnedImageTransport(ctx, provider, clients, mediaDir, { transport: images.transport, maxPixels: images.maxPixels }, budget);
 }

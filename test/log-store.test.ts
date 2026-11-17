@@ -8,7 +8,7 @@ import { Jimp } from "jimp";
 import sqlite from "@koishijs/plugin-database-sqlite";
 import { extendEventTable, EventStore } from "../src/agent/event-store";
 import { AliasRegistry, extendAliasTable } from "../src/agent/aliases";
-import { ImageFitter, InlineImageTransport } from "../src/agent/image-transport";
+import { createImageTransport, extendImageTables, type ImageTransport } from "../src/agent/image-transport";
 import { AgentLog, extendLogTable } from "../src/agent/log-store";
 import type { NormalizedMessage } from "../src/perception/types";
 
@@ -20,11 +20,12 @@ async function setup(maxBatchEvents = 80) {
   extendEventTable(app);
   extendAliasTable(app);
   extendLogTable(app);
+  extendImageTables(app);
   await app.start();
   const mediaDir = mkdtempSync(join(tmpdir(), "mio-media-"));
   const events = new EventStore(app);
   const aliases = new AliasRegistry(app);
-  const images = new InlineImageTransport(new ImageFitter(mediaDir, 64 * 64), 2 ** 20);
+  const images = createImageTransport(app, { id: "p", name: "P", type: "openai", apiKey: "k", images: { transport: "inline", maxPixels: 64 * 64, inlineBudgetMiB: 1 } }, {}, mediaDir) as ImageTransport;
   const log = new AgentLog(app, aliases, { botName: "澪", images: { of: () => images, all: [images] }, maxBatchEvents });
 
   let n = 0;

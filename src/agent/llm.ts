@@ -1,5 +1,5 @@
 import type { BetaContentBlock } from "@anthropic-ai/sdk/resources/beta/messages/messages";
-import type { ModelConfig, ProviderConfig, ProviderManager } from "../llm/provider";
+import type { ModelConfig, ProviderManager } from "../llm/provider";
 import { buildOpenAIReasoningBody } from "../llm/reasoning";
 import { tokenTracker } from "../llm/token-tracker";
 import { anthropicPromptDigest, buildAnthropicRequest, parseAnthropicResponse } from "./anthropic";
@@ -13,7 +13,7 @@ export interface AgentStep {
   toolCalls: ToolCall[];
   /** Anthropic 模型的响应 content 原样（含思考块和签名），存进 log 原样发回；其他供应商为 null */
   anthropicContent: BetaContentBlock[] | null;
-  /** Anthropic 模型：生成这一步时 system、tools 和发图设置的指纹（见 anthropicPromptDigest）；其他供应商为 null */
+  /** Anthropic 模型：生成这一步时 system 和 tools 的指纹（思考块签名绑定的就是它们）；其他供应商为 null */
   promptDigest: string | null;
   /** cacheWriteTokens：写入缓存的 token（只有 Anthropic 单独报告，其他供应商为 0） */
   usage: { promptTokens: number; completionTokens: number; cachedTokens: number; cacheWriteTokens: number };
@@ -57,7 +57,7 @@ export class AgentLLM {
     const providerConfig = this.providers.getProviderConfig(model.providerId);
     if (!providerConfig) throw new Error(`agent 模型的供应商不存在: ${model.providerId}`);
     if (!model.maxTokens) throw new Error(`agent 模型 ${model.modelName} 没有设置 maxTokens`);
-    if (providerConfig.type === "anthropic") return this.stepAnthropic(messages, tools, model, providerConfig);
+    if (providerConfig.type === "anthropic") return this.stepAnthropic(messages, tools, model);
 
     const client = this.providers.getOpenAIProvider(model.providerId);
     if (providerConfig.type !== "openai" || !client) {
@@ -99,14 +99,14 @@ export class AgentLLM {
     };
   }
 
-  private async stepAnthropic(messages: (SystemMessage | ChatMessage)[], tools: ToolDefinition[], model: ModelConfig, providerConfig: ProviderConfig): Promise<AgentStep> {
+  private async stepAnthropic(messages: (SystemMessage | ChatMessage)[], tools: ToolDefinition[], model: ModelConfig): Promise<AgentStep> {
     const client = this.providers.getAnthropicProvider(model.providerId);
     if (!client) throw new Error(`找不到 Anthropic 供应商的客户端: ${model.providerId}`);
-    const response = await client.beta.messages.create(buildAnthropicRequest(messages, tools, model, providerConfig));
+    const response = await client.beta.messages.create(buildAnthropicRequest(messages, tools, model));
     const parsed = parseAnthropicResponse(response, model);
     // 按实际回答的模型记账（server-side fallback 时是备用模型）。promptTokens 含缓存读写，和其他供应商的统计口径一致
     tokenTracker.record(response.model, parsed.usage.promptTokens, parsed.usage.completionTokens, parsed.usage.cachedTokens, "agent");
     const system = messages[0].role === "system" ? messages[0].content : "";
-    return { ...parsed, reasoning: null, promptDigest: anthropicPromptDigest(system, tools, providerConfig.images) };
+    return { ...parsed, reasoning: null, promptDigest: anthropicPromptDigest(system, tools) };
   }
 }

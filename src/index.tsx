@@ -14,7 +14,7 @@ import { registerRecorder } from "./agent/recorder";
 import { extendSentRefTable, trackSentRefs } from "./agent/qq-refs";
 import { extendAliasTable } from "./agent/aliases";
 import { extendLogTable } from "./agent/log-store";
-import { extendUploadedImageTable } from "./agent/image-transport";
+import { extendImageTables } from "./agent/image-transport";
 import { extendNoteTable } from "./agent/notes";
 import { AliasRegistry } from "./agent/aliases";
 import { tryBootstrapAgent } from "./agent/bootstrap";
@@ -38,7 +38,7 @@ export function apply(ctx: Context, config: MioConfig) {
   extendEventTable(ctx);
   extendAliasTable(ctx);
   extendLogTable(ctx);
-  extendUploadedImageTable(ctx);
+  extendImageTables(ctx);
   extendNoteTable(ctx);
   extendSentRefTable(ctx);
   extendMetaTable(ctx);
