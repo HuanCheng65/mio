@@ -37,31 +37,21 @@ export function parseGroupId(groupId: string): { platform: string; channelId: st
 
 export class GroupRegistry {
   private modes = new Map<string, MioGroupMode>();
-  private loaded: Promise<void>;
 
   constructor(private ctx: Context) {
-    let resolveLoaded!: () => void;
-    this.loaded = new Promise((resolve) => (resolveLoaded = resolve));
-    ctx.on("ready", async () => {
-      await this.load();
-      resolveLoaded();
-    });
+    ctx.on("ready", () => this.load());
   }
 
   private async load(): Promise<void> {
     const rows = await this.ctx.database.get("channel", { mioMode: { $ne: "off" } }, ["platform", "id", "mioMode"]);
-    this.modes.clear();
-    for (const row of rows) {
-      const groupId = toGroupId(row.platform, row.id);
-      // 模式改过名或删过：数据库里留着旧值时停下来，不能悄悄当成别的模式
-      if (!MIO_GROUP_MODES.includes(row.mioMode)) throw new Error(`channel ${groupId} 的 mioMode 是未知的 "${row.mioMode}"，请改成 ${MIO_GROUP_MODES.join(" / ")} 之一`);
-      this.modes.set(groupId, row.mioMode);
+    // 模式改过名或删过：数据库里留着旧值时一个群都不开，不能悄悄当成别的模式
+    const unknown = rows.filter((row) => !MIO_GROUP_MODES.includes(row.mioMode));
+    if (unknown.length > 0) {
+      const list = unknown.map((row) => `${toGroupId(row.platform, row.id)}="${row.mioMode}"`).join(", ");
+      throw new Error(`channel 表里有未知的 mioMode：${list}，请改成 ${MIO_GROUP_MODES.join(" / ")} 之一`);
     }
-  }
-
-  /** 启动时从数据库加载完成后 resolve */
-  whenLoaded(): Promise<void> {
-    return this.loaded;
+    this.modes.clear();
+    for (const row of rows) this.modes.set(toGroupId(row.platform, row.id), row.mioMode);
   }
 
   /** 只更新内存；持久化由指令的 channelFields 完成 */

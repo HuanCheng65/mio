@@ -35,5 +35,5 @@ test("loads modes and tells which groups Mio wakes in", async () => {
 
 test("refuses to load a mode left over from a rename", async () => {
   const { ready } = registryWith([{ platform: "qq", id: "A", mioMode: "agent" }]);
-  await assert.rejects(ready(), /qq:A 的 mioMode 是未知的 "agent"/);
+  await assert.rejects(ready(), /未知的 mioMode：qq:A="agent"/);
 });
