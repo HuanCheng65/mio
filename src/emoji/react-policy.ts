@@ -19,5 +19,3 @@ export const ALLOWED_REACT_EMOJI_NAMES = [
   "舔屏",
   "糗大了",
 ] as const;
-
-export const ALLOWED_REACT_EMOJI_TEXT = ALLOWED_REACT_EMOJI_NAMES.join("、");

@@ -1,11 +1,6 @@
 import { Session } from 'koishi';
 import { passiveReplyBlocker, recordPassiveReply } from '../platform/qq';
 
-export interface UserInfo {
-  name: string;
-  id: string;
-}
-
 /**
  * 计算两个字符串的编辑距离（Levenshtein）
  */
@@ -21,61 +16,6 @@ export function levenshtein(a: string, b: string): number {
     }
   }
   return dp[m][n];
-}
-
-/**
- * 去掉【...】称号/身份部分，返回纯名字
- */
-function stripTitle(name: string): string {
-  return name.replace(/【[^】]*】/g, '').trim();
-}
-
-/**
- * 将 message 中形如 @Xxx（非 @#ID 格式）的提及，
- * 通过模糊匹配替换为 @#ID 格式。
- *
- * @param message  LLM 原始输出文本
- * @param users    当前群成员快照（从 buffer 消息中提取）
- */
-export function resolveAtMentions(message: string, users: UserInfo[]): string {
-  if (users.length === 0) return message;
-
-  // 匹配 @ 后跟非空白且不是 # 开头的内容（即非 @#ID 格式）
-  // 捕获到下一个空白、句末或字符串结尾
-  return message.replace(/@(?!#[0-9A-Za-z])([^\s@，。！？,.!?\n]+)/g, (full, rawName) => {
-    const queryName = stripTitle(rawName);
-    if (!queryName) return full;
-
-    let bestId: string | null = null;
-    let bestScore = Infinity;
-    let bestLen = 0;
-
-    for (const user of users) {
-      const candidateName = stripTitle(user.name);
-      if (!candidateName) continue;
-
-      const dist = levenshtein(queryName, candidateName);
-      const maxLen = Math.max(queryName.length, candidateName.length);
-      const similarity = 1 - dist / maxLen; // 0~1，越大越相似
-
-      if (dist < bestScore || (dist === bestScore && candidateName.length > bestLen)) {
-        bestScore = dist;
-        bestId = user.id;
-        bestLen = candidateName.length;
-      }
-    }
-
-    // 相似度阈值：编辑距离 / max长度 <= 0.6（即相似度 >= 0.4）
-    if (bestId !== null) {
-      const maxLen = Math.max(queryName.length, bestLen);
-      const similarity = 1 - bestScore / maxLen;
-      if (similarity >= 0.4) {
-        return `@#${bestId}`;
-      }
-    }
-
-    return full; // 没找到合适的，原样保留
-  });
 }
 
 export interface DeliveryOptions {
