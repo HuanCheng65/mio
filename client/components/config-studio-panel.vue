@@ -94,7 +94,7 @@
             v-model.trim="newGroupId"
             class="form-input mono"
             type="text"
-            placeholder="群 ID，如 qq:EF11ED8C7B87648111CF06805F5EF5F8"
+            placeholder="群 ID，形如 qq:&lt;32 位十六进制&gt;"
             @keydown.enter="addGroup"
           />
           <button class="btn btn--ghost" type="button" :disabled="!newGroupId" @click="addGroup">

@@ -50,7 +50,7 @@ export interface Config {
   };
   agent: {
     model: AgentModelConfig;
-    /** 按群覆盖 agent 模型，键是群 ID（如 qq:2860C352DF05A086C87D7CFD6FA5012E）；没列出的群用 model */
+    /** 按群覆盖 agent 模型，键是群 ID（形如 qq:<32 位十六进制>）；没列出的群用 model */
     groupModels: Record<string, AgentModelConfig>;
     personaFile: string;
     maxSteps: number;
@@ -253,7 +253,7 @@ export const Config: Schema<Config> = Schema.object({
         budgetTokens: Schema.number(),
       }).description("推理控制"),
       extraBody: Schema.dict(Schema.any()).description("附加请求体字段（anthropic 不支持）"),
-    })).default({}).description("按群覆盖 agent 模型（键是群 ID，如 qq:2860C352DF05A086C87D7CFD6FA5012E；没列出的群用上面的 agent 模型）"),
+    })).default({}).description("按群覆盖 agent 模型（键是群 ID，形如 qq:<32 位十六进制>；没列出的群用上面的 agent 模型）"),
     personaFile: Schema.string().default("mio-agent.md").description("agent 人设文件名（data/persona 下）"),
     maxSteps: Schema.number().default(6).description("每次唤醒最多几步工具调用"),
     maxBatchEvents: Schema.number().default(80).description("一批最多渲染多少条消息（积压过多时只看最近的）"),
