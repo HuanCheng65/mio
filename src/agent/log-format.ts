@@ -1,5 +1,5 @@
 import type { ImageSegment, MessageSegment, NormalizedMessage } from "../perception/types";
-import type { BanBody, MioEventRow, ReactionBody, RecallBody } from "./event-store";
+import type { BanBody, MioEventRow, MuteBody, ReactionBody, RecallBody } from "./event-store";
 
 /** log 里存的内容片段；图片只存文件名，发请求时再读成 base64，保证每次字节相同、能命中缓存 */
 export type LogPart = { type: "text"; text: string } | { type: "image"; file: string };
@@ -155,6 +155,12 @@ export function renderBatch(events: MioEventRow[], ctx: BatchContext): LogPart[]
     }
     if (event.kind === "ban") {
       lines.push(renderBan(event.body as BanBody, event.timestamp, ctx));
+      continue;
+    }
+    if (event.kind === "mute") {
+      lines.push((event.body as MuteBody).muted
+        ? `〔${clock(event.timestamp)} 你被设成了静音，这之后没法在群里说话〕`
+        : `〔${clock(event.timestamp)} 静音解除了，可以说话了〕`);
       continue;
     }
     if (event.kind === "reaction") {

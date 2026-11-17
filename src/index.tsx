@@ -63,7 +63,7 @@ export function apply(ctx: Context, config: MioConfig) {
   const aliases = new AliasRegistry(ctx);
   const mediaDir = path.resolve(ctx.baseDir, "data/mio/media");
   const listeners: RecordListener[] = [];
-  registerGroupCommands(ctx, groups, logger);
+  registerGroupCommands(ctx, groups, events, logger);
   trackSentRefs(ctx, logger);
   registerRecorder(ctx, {
     groups,

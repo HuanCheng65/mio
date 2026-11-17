@@ -239,7 +239,7 @@ export const Config: Schema<Config> = Schema.object({
         budgetTokens: Schema.number(),
       }).description("推理控制"),
       extraBody: Schema.dict(Schema.any()).description("附加请求体字段"),
-    }).description("agent 模型（mio.agent 模式的群使用；embedding 和搜索沿用上面的配置）"),
+    }).description("agent 模型（on / shadow 模式的群使用；embedding 和搜索沿用上面的配置）"),
     groupModels: Schema.dict(Schema.object({
       providerId: Schema.string().required().description("供应商 ID（OpenAI 兼容或 anthropic）"),
       modelName: Schema.string().required().description("模型名称"),

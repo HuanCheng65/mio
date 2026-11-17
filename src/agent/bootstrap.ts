@@ -123,7 +123,7 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
     maxSteps: agent.maxSteps,
     systemPrompt: loadAgentSystemPrompt(agent.personaFile),
     reminder: loadReminder(),
-    isShadow: (groupId) => groups.isAgentShadow(groupId),
+    isShadow: (groupId) => groups.isShadow(groupId),
     sleep: {
       prompt: loadSleepPrompt(),
       maxSteps: agent.sleep.maxSteps,
@@ -165,12 +165,26 @@ export function tryBootstrapAgent(ctx: Context, config: MioConfig, logger: Logge
   };
   listeners.push(listener);
 
+  ctx.command("mio.status", "查看各群的模式、模型、log 长度和发送限制", { authority: 4 }).action(async () => {
+    const groupIds = groups.list();
+    if (groupIds.length === 0) return "没有开启任何群";
+    const lines = await Promise.all(groupIds.map(async (groupId) => {
+      const mode = groups.getMode(groupId);
+      const model = modelFor(groupId);
+      const parts = [`${groupId}（${mode}）`, `${model.providerId}/${model.modelName}`, `log ${await log.tokenCount(groupId)} tokens`];
+      const blocked = outbox.blocker(groupId);
+      if (blocked) parts.push(`发不出去：${blocked}`);
+      return parts.join(" · ");
+    }));
+    return lines.join("\n");
+  });
+
   ctx
     .command("mio.sleep", "让澪现在就睡前整理：把这个群的 log 压成新的一段", { authority: 4 })
     .action(async ({ session }) => {
       if (!session || session.isDirect) return "请在群里使用这个指令";
       const groupId = session.cid;
-      if (!groups.runsAgent(groupId)) return "这个群没有开新运行时";
+      if (!groups.runsAgent(groupId)) return "澪在这个群没有醒着（不是 on / shadow 模式）";
       const tokens = await log.tokenCount(groupId);
       if (tokens === 0) return "这个群的 log 是空的，不用整理";
 

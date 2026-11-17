@@ -5,7 +5,7 @@ import type { NormalizedMessage } from "../perception/types";
  * 群事件流：新运行时的事实来源。每个群一个自增 seq，渲染时就是 [m{seq}]，永不重排。
  * body 存完整的 normalize 结果，渲染方式以后可以变，原始事件不变。
  */
-export type MioEventKind = "message" | "recall" | "ban" | "reaction";
+export type MioEventKind = "message" | "recall" | "ban" | "reaction" | "mute";
 
 export interface RecallBody {
   recalledMessageId: string;
@@ -21,6 +21,11 @@ export interface BanBody {
   lift: boolean;
   /** 解除时、或没有时长（全员禁言）时为 0 */
   durationSec: number;
+}
+
+/** mio.mute / mio.unmute：澪被静音或解除静音 */
+export interface MuteBody {
+  muted: boolean;
 }
 
 /** 表情回应（仅 OneBot）；澪自己贴的不录，log 里已有她的 react 调用 */
@@ -40,7 +45,7 @@ export interface MioEventRow {
   userId: string;
   isBot: boolean;
   timestamp: number;
-  body: NormalizedMessage | RecallBody | BanBody | ReactionBody;
+  body: NormalizedMessage | RecallBody | BanBody | ReactionBody | MuteBody;
   /** 官方 QQ 消息的引用索引，见 NormalizedMessage.refIdx */
   refIdx?: string | null;
 }

@@ -207,6 +207,7 @@ export class AgentLog {
         }
         continue;
       }
+      if (event.kind === "mute") continue;
       if (event.kind === "reaction") {
         const reaction = event.body as ReactionBody;
         aliases.set(reaction.userId, await this.aliases.aliasOf(groupId, reaction.userId));

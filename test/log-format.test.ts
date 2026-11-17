@@ -135,3 +135,12 @@ test("renders OneBot bans and reactions with aliases and [mN] targets", () => {
   assert.match(text, /〔21:03 Masou#a2 解除了你的禁言〕/);
   assert.match(text, /〔21:03 Masou#a2 开启了全员禁言，你也发不出消息了〕/);
 });
+
+test("renders mute and unmute notices so Mio knows why she was quiet", () => {
+  const mute = (seq: number, muted: boolean): MioEventRow =>
+    ({ id: seq, groupId: "qq:G", seq, kind: "mute", platformMessageId: "", userId: "", isBot: false, timestamp: T, body: { muted } });
+  const parts = renderBatch([mute(9, true), message(10, { segments: [{ type: "text", content: "人呢" }] }), mute(11, false)], ctx());
+
+  const text = (parts[0] as { text: string }).text;
+  assert.match(text, /〔21:03 你被设成了静音，这之后没法在群里说话〕\n\[m10\] 白川#a1 21:03: 人呢\n〔21:03 静音解除了，可以说话了〕/);
+});
