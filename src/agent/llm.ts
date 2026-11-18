@@ -2,7 +2,7 @@ import type { BetaContentBlock } from "@anthropic-ai/sdk/resources/beta/messages
 import type { ModelConfig, ProviderManager } from "../llm/provider";
 import { buildOpenAIReasoningBody } from "../llm/reasoning";
 import { tokenTracker } from "../llm/token-tracker";
-import { anthropicPromptDigest, buildAnthropicRequest, parseAnthropicResponse } from "./anthropic";
+import { anthropicPromptDigest, buildAnthropicRequest, parseAnthropicResponse, promptSnapshots } from "./anthropic";
 import type { ChatMessage, ToolCall } from "./log-store";
 import type { ToolDefinition } from "./tools";
 
@@ -13,7 +13,7 @@ export interface AgentStep {
   toolCalls: ToolCall[];
   /** Anthropic 模型的响应 content 原样（含思考块和签名），存进 log 原样发回；其他供应商为 null */
   anthropicContent: BetaContentBlock[] | null;
-  /** Anthropic 模型：生成这一步时 system 和 tools 的指纹（思考块签名绑定的就是它们）；其他供应商为 null */
+  /** Anthropic 模型：这一段提示词快照（顶层 system 和 tools）的指纹，思考块签名绑定的就是它们；其他供应商为 null */
   promptDigest: string | null;
   /** cacheWriteTokens：写入缓存的 token（只有 Anthropic 单独报告，其他供应商为 0） */
   usage: { promptTokens: number; completionTokens: number; cachedTokens: number; cacheWriteTokens: number };
@@ -24,13 +24,14 @@ export type SystemMessage = { role: "system"; content: string };
 /**
  * OpenAI 兼容接口没有"只管一轮"的消息：只有请求末尾这次要发的提醒有效，拼到最近一批消息后面；
  * 发过的提醒都不发（和 Anthropic 上清掉的提醒一样看不到）。anthropicContent / promptDigest 不是 OpenAI 的字段，去掉。
+ * 提示词快照也不发：OpenAI 兼容接口不能中途换工具，一直用开头那条 system 和请求的 tools（当前的），改了就重新缓存。
  */
 export function toOpenAIMessages(messages: (SystemMessage | ChatMessage)[]): unknown[] {
   const last = messages.at(-1);
   const pending = last?.role === "reminder" ? last.content : null;
   const out: (SystemMessage | ChatMessage)[] = [];
   for (const m of messages) {
-    if (m.role === "reminder") continue;
+    if (m.role === "reminder" || m.role === "prompt") continue;
     if (m.role === "assistant" && m.anthropicContent) {
       const { anthropicContent: _, promptDigest: __, ...rest } = m;
       out.push(rest);
@@ -106,7 +107,7 @@ export class AgentLLM {
     const parsed = parseAnthropicResponse(response, model);
     // 按实际回答的模型记账（server-side fallback 时是备用模型）。promptTokens 含缓存读写，和其他供应商的统计口径一致
     tokenTracker.record(response.model, parsed.usage, "agent");
-    const system = messages[0].role === "system" ? messages[0].content : "";
-    return { ...parsed, reasoning: null, promptDigest: anthropicPromptDigest(system, tools) };
+    const { base } = promptSnapshots(messages);
+    return { ...parsed, reasoning: null, promptDigest: anthropicPromptDigest(base.system, base.tools) };
   }
 }

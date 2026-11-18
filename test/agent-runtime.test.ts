@@ -10,6 +10,7 @@ import { AgentRuntime, type SleepOptions } from "../src/agent/runtime";
 import { ToolRegistry, type AgentTool } from "../src/agent/tools";
 import type { AgentStep } from "../src/agent/llm";
 import type { AgentModelConfig } from "../src/agent/models";
+import type { AgentPrompts } from "../src/agent/prompts";
 import type { NormalizedMessage } from "../src/perception/types";
 
 const G = "qq:G";
@@ -39,6 +40,7 @@ async function setup(
     sleep?: Partial<SleepOptions>;
     images?: Partial<ImageTransport>;
     modelFor?: (groupId: string) => AgentModelConfig;
+    prompts?: () => AgentPrompts;
   } = {},
 ) {
   const app = new Context();
@@ -85,7 +87,7 @@ async function setup(
   const runtime = new AgentRuntime(log, llm as any, tools, {
     modelFor: options.modelFor ?? (() => ({ providerId: "p", modelName: "m", maxTokens: 100, cacheTtlMinutes: 240 })),
     maxSteps: options.maxSteps ?? 6,
-    prompts: () => ({ systemPrompt: "SYSTEM", reminder: "〔提醒〕", sleep: "〔{time} 睡前整理〕" }),
+    prompts: options.prompts ?? (() => ({ systemPrompt: "SYSTEM", reminder: "〔提醒〕", sleep: "〔{time} 睡前整理〕" })),
     isShadow: () => false,
     sleep: { maxSteps: 6, compactTokens: 1_000_000, minTokens: 0, tailEvents: 30, ...options.sleep },
     onSegmentStart: (g) => segmentStarts.push(g),
@@ -110,8 +112,9 @@ test("a wake with no tool calls ends after one step and keeps the reasoning", as
   assert.equal(requests.length, 1);
   assert.deepEqual((requests[0][0] as any), { role: "system", content: "SYSTEM" });
   const entries = await log.entries(G);
-  assert.deepEqual(entries.map((e) => e.role), ["user", "assistant"]);
-  assert.equal(entries[1].reasoning, "没什么要说的");
+  assert.deepEqual(entries.map((e) => e.role), ["user", "prompt", "assistant"]);
+  assert.deepEqual(entries[1].prompt, { system: "SYSTEM", tools: (requests[0] as any[]).find((m) => m.role === "prompt").tools });
+  assert.equal(entries[2].reasoning, "没什么要说的");
   await app.stop();
 });
 
@@ -151,7 +154,7 @@ test("every wake step ends with a reminder; sent reminders are logged and replay
   assert.deepEqual(requests[1].slice(0, requests[0].length), requests[0], "the step's reminder stays in place on the next step");
   assert.deepEqual(requests[2].slice(0, requests[1].length), requests[1], "and on the next wake");
   assert.deepEqual((await log.entries(G)).map((e) => e.role), [
-    "user", "reminder", "assistant", "tool", "reminder", "assistant",
+    "user", "prompt", "reminder", "assistant", "tool", "reminder", "assistant",
     "user", "assistant", // an empty reply is left out of Anthropic requests, so its reminder is not logged
   ]);
   assert.equal((await log.entries(G)).filter((e) => e.role === "reminder").every((e) => e.tokens === 0), true);
@@ -162,7 +165,8 @@ test("a failed request leaves no reminder behind", async () => {
   const { app, log, runtime, say } = await setup([]);
   await say("早");
   await assert.rejects(runtime.wake(G), /script exhausted/);
-  assert.deepEqual((await log.entries(G)).map((e) => e.role), ["user"]);
+  // 快照不出现在对话里，可以在请求前写下；提醒要等请求成功
+  assert.deepEqual((await log.entries(G)).map((e) => e.role), ["user", "prompt"]);
   await app.stop();
 });
 
@@ -208,7 +212,7 @@ test("a wake requested while running becomes exactly one more run", async () => 
 
   assert.equal(ctx.requests.length, 2);
   const entries = await ctx.log.entries(G);
-  assert.deepEqual(entries.map((e) => e.role), ["user", "assistant", "user", "assistant"]);
+  assert.deepEqual(entries.map((e) => e.role), ["user", "prompt", "assistant", "user", "assistant"]);
   await ctx.app.stop();
 });
 
@@ -343,7 +347,7 @@ test("a tool call cut off by a restart is closed before the next wake", async ()
   await runtime.wake(G);
 
   assert.deepEqual((await log.entries(G)).map((e) => [e.role, e.toolCallId]), [
-    ["user", null], ["assistant", null], ["tool", "c1"], ["user", null], ["assistant", null],
+    ["user", null], ["assistant", null], ["tool", "c1"], ["user", null], ["prompt", null], ["assistant", null],
   ]);
   assert.match((requests[0][3] as any).content, /执行途中程序重启了/);
   await app.stop();
@@ -392,12 +396,55 @@ test("raw Anthropic content survives the log and is replayed unchanged", async (
   await say("早");
   await runtime.wake(G);
 
-  const stored = (await log.entries(G))[2];
+  const stored = (await log.entries(G))[3];
   assert.deepEqual(stored.anthropicContent, blocks);
   assert.equal(stored.promptDigest, "d1");
   assert.equal(stored.reasoning, null);
-  assert.deepEqual((requests[1][3] as any).anthropicContent, blocks);
-  assert.equal((requests[1][3] as any).promptDigest, "d1");
-  assert.deepEqual((requests[1][3] as any).tool_calls, [call("toolu_1", "note", { text: "a" })]);
+  assert.deepEqual((requests[1][4] as any).anthropicContent, blocks);
+  assert.equal((requests[1][4] as any).promptDigest, "d1");
+  assert.deepEqual((requests[1][4] as any).tool_calls, [call("toolu_1", "note", { text: "a" })]);
+  await app.stop();
+});
+
+test("a changed tool definition is appended as a new snapshot instead of a reminder, once", async () => {
+  const tool: AgentTool = { name: "note", description: "旧说明", parameters: { type: "object" }, async run() { return "ok"; } };
+  const { app, log, runtime, requests, say } = await setup([reply([], { content: "嗯" }), reply([], { content: "" }), reply([], { content: "嗯" }), reply([], { content: "嗯" })], { tools: [tool] });
+  await say("早");
+  await runtime.wake(G);
+
+  tool.description = "新说明";
+  await say("午");
+  await runtime.wake(G); // 什么都没回：这一步在 Anthropic 请求里会被省略，变更不写，留到下一步
+  await say("晚");
+  await runtime.wake(G);
+  await say("夜");
+  await runtime.wake(G);
+
+  const changed = { role: "prompt", system: "SYSTEM", tools: [{ type: "function", function: { name: "note", description: "新说明", parameters: { type: "object" } } }] };
+  assert.deepEqual(requests[1].at(-1), changed, "the change ends the request, with no reminder after it");
+  assert.deepEqual(requests[2].at(-1), changed, "an empty reply leaves the change for the next step");
+  assert.deepEqual((requests[3].at(-1) as any).role, "reminder", "once logged, later steps carry the reminder again");
+  assert.deepEqual((await log.entries(G)).map((e) => e.role), [
+    "user", "prompt", "reminder", "assistant", "user", "assistant", "user", "prompt", "assistant", "user", "reminder", "assistant",
+  ]);
+  await app.stop();
+});
+
+test("a changed persona puts Mio to sleep first, so the new segment opens with it", async () => {
+  let system = "SYSTEM";
+  const { app, log, runtime, requests, say } = await setup([reply(), finish(), reply()], { prompts: () => ({ systemPrompt: system, reminder: "〔提醒〕", sleep: "〔{time} 睡前整理〕" }) });
+  await say("早");
+  await runtime.wake(G);
+
+  system = "SYSTEM v2";
+  await say("@澪 午");
+  await runtime.wake(G);
+  assert.equal(requests.length, 3, "the sleep, then the wake that answers the new message");
+  assert.match((requests[1].at(-1) as any).content, /睡前整理/, "the sleep runs on the old segment");
+  assert.doesNotMatch(JSON.stringify(requests[1]), /@澪 午/, "the waking message is left for the wake");
+  assert.match(JSON.stringify(requests[2]), /@澪 午/);
+  assert.equal(await log.currentSegment(G), 2);
+  const snapshot = (await log.entries(G)).find((e) => e.role === "prompt");
+  assert.equal(snapshot?.prompt?.system, "SYSTEM v2");
   await app.stop();
 });

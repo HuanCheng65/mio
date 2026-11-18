@@ -5,6 +5,12 @@ export interface ToolDefinition {
   function: { name: string; description: string; parameters: Record<string, unknown> };
 }
 
+/** 两组工具定义是否相同（按名字对，不管顺序） */
+export function sameTools(a: ToolDefinition[], b: ToolDefinition[]): boolean {
+  const byName = new Map(a.map((t) => [t.function.name, JSON.stringify(t.function)]));
+  return a.length === b.length && b.every((t) => byName.get(t.function.name) === JSON.stringify(t.function));
+}
+
 export interface ToolContext {
   groupId: string;
   platform: string;

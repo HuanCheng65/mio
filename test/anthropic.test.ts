@@ -15,6 +15,7 @@ const tools: ToolDefinition[] = [
 ];
 const system = { role: "system" as const, content: "SYSTEM" };
 const CACHE = { type: "ephemeral", ttl: "1h" };
+const base = { role: "prompt" as const, system: "SYSTEM", tools };
 const digest = anthropicPromptDigest("SYSTEM", tools);
 
 const rawTurn = [
@@ -36,7 +37,7 @@ test("system, tools and the conversation are converted with 1h cache breakpoints
     { role: "tool", tool_call_id: "toolu_2", content: "发出去了" },
     { role: "user", content: "新消息" },
   ];
-  const request = buildAnthropicRequest([system, ...messages], tools, model);
+  const request = buildAnthropicRequest([system, base, ...messages], tools, model);
 
   assert.deepEqual(request.system, [{ type: "text", text: "SYSTEM", cache_control: CACHE }]);
   assert.deepEqual(request.tools, [
@@ -69,7 +70,7 @@ test("each later request extends the previous one (ignoring where the breakpoint
     { role: "tool", tool_call_id: "toolu_2", content: "发出去了" },
   ];
   const third: ChatMessage[] = [...second, { role: "user", content: "又来了" }];
-  const requests = [first, second, third].map((m) => withoutCacheControl(buildAnthropicRequest([system, ...m], tools, model)) as any);
+  const requests = [first, second, third].map((m) => withoutCacheControl(buildAnthropicRequest([system, base, ...m], tools, model)) as any);
   for (let i = 1; i < requests.length; i++) {
     assert.deepEqual(requests[i].system, requests[i - 1].system);
     assert.deepEqual(requests[i].tools, requests[i - 1].tools);
@@ -77,7 +78,7 @@ test("each later request extends the previous one (ignoring where the breakpoint
   }
 
   // 每个请求最后一个断点的位置，下一个请求也在那里打了断点：新增的块再多，也能对上上次写下的缓存
-  const raw = [first, second, third].map((m) => buildAnthropicRequest([system, ...m], tools, model).messages);
+  const raw = [first, second, third].map((m) => buildAnthropicRequest([system, base, ...m], tools, model).messages);
   for (let i = 1; i < raw.length; i++) {
     const previousLast = raw[i - 1].length - 1;
     assert.deepEqual((raw[i][previousLast].content as any[]).at(-1).cache_control, CACHE);
@@ -87,6 +88,7 @@ test("each later request extends the previous one (ignoring where the breakpoint
 test("assistant entries from an OpenAI-compatible model are rebuilt; empty turns are always left out", () => {
   const request = buildAnthropicRequest([
     system,
+    base,
     { role: "user", content: "早" },
     { role: "assistant", content: null },
     { role: "user", content: "在吗" },
@@ -106,13 +108,14 @@ test("assistant entries from an OpenAI-compatible model are rebuilt; empty turns
   ]);
   assert.throws(() => buildAnthropicRequest([
     system,
+    base,
     { role: "user", content: "早" },
     { role: "assistant", content: null, tool_calls: [{ id: "call_2", type: "function", function: { name: "note", arguments: "{oops" } }] },
     { role: "tool", tool_call_id: "call_2", content: "x" },
   ], tools, model), /call_2 的参数不是合法 JSON/);
 });
 
-test("thinking minted under an older persona or tool set is dropped from the oldest turn up to the last stale one", () => {
+test("thinking minted before the segment's snapshot is dropped from the oldest turn up to the last stale one", () => {
   const blocks = (n: number) => [
     { type: "thinking", thinking: `想${n}`, signature: `sig-${n}` },
     { type: "tool_use", id: `toolu_${n}`, name: "note", input: {} },
@@ -126,20 +129,18 @@ test("thinking minted under an older persona or tool set is dropped from the old
 
   // 1 是改功能之前的条目（没有指纹），2 在旧人设下，3 在现在的人设下
   const history = [{ role: "user", content: "早" } as ChatMessage, ...turn(1), ...turn(2, "old"), ...turn(3, digest)];
-  assert.deepEqual(assistantTurns(buildAnthropicRequest([system, ...history], tools, model)), ["tool_use", "tool_use", "thinking+tool_use"]);
+  assert.deepEqual(assistantTurns(buildAnthropicRequest([system, base, ...history], tools, model)), ["tool_use", "tool_use", "thinking+tool_use"]);
 
   // 人设又改回去：旧人设下的 2 指纹又对上了，但 3 是在 2 去掉思考块之后生成的，放回去会让 3 失效，所以照样去掉
   const reverted = [{ role: "user", content: "早" } as ChatMessage, ...turn(1), ...turn(2, digest), ...turn(3, "newer"), ...turn(4, digest)];
-  assert.deepEqual(assistantTurns(buildAnthropicRequest([system, ...reverted], tools, model)), ["tool_use", "tool_use", "tool_use", "thinking+tool_use"]);
+  assert.deepEqual(assistantTurns(buildAnthropicRequest([system, base, ...reverted], tools, model)), ["tool_use", "tool_use", "tool_use", "thinking+tool_use"]);
 
-  // 人设改了：所有思考块都去掉；log 里存的块不动
-  const changed = buildAnthropicRequest([{ role: "system", content: "SYSTEM v2" }, ...history], tools, model);
+  // 指纹按这一段的快照算，和请求开头那条 system（OpenAI 兼容接口用的当前人设）无关；log 里存的块不动
+  const otherBase = { ...base, system: "SYSTEM v0" };
+  const changed = buildAnthropicRequest([{ role: "system", content: "SYSTEM" }, otherBase, ...history], tools, model);
   assert.deepEqual(assistantTurns(changed), ["tool_use", "tool_use", "tool_use"]);
+  assert.equal(changed.system[0].text, "SYSTEM v0");
   assert.equal((history[5] as any).anthropicContent[0].type, "thinking");
-
-  // 工具定义变了也一样
-  const retooled = buildAnthropicRequest([system, ...history], [tools[0]], model);
-  assert.deepEqual(assistantTurns(retooled), ["tool_use", "tool_use", "tool_use"]);
 
   // 只有思考块的一步去掉之后是空的：连同它前面的提醒一起省略
   const thinkingOnly: ChatMessage[] = [
@@ -148,19 +149,43 @@ test("thinking minted under an older persona or tool set is dropped from the old
     { role: "assistant", content: null, anthropicContent: [blocks(5)[0]], promptDigest: "old" },
     { role: "user", content: "在吗" },
   ];
-  assert.deepEqual(withoutCacheControl(buildAnthropicRequest([system, ...thinkingOnly], tools, model).messages), [
+  assert.deepEqual(withoutCacheControl(buildAnthropicRequest([system, base, ...thinkingOnly], tools, model).messages), [
     { role: "user", content: [{ type: "text", text: "早" }] },
     { role: "user", content: [{ type: "text", text: "在吗" }] },
   ]);
 });
 
 test("requests that Anthropic cannot take fail loudly", () => {
-  assert.throws(() => buildAnthropicRequest([system, { role: "user", content: "早" }, { role: "assistant", content: "嗯" }], tools, model), /最后一条必须是 user/);
+  assert.throws(() => buildAnthropicRequest([system, base, { role: "user", content: "早" }, { role: "assistant", content: "嗯" }], tools, model), /最后一条必须是 user/);
   assert.throws(() => buildAnthropicRequest([{ role: "user", content: "早" }], tools, model), /第一条消息必须是 system/);
+  assert.throws(() => buildAnthropicRequest([system, { role: "user", content: "早" }], tools, model), /没有这一段的提示词快照/);
+  assert.throws(() => buildAnthropicRequest([system, base, { role: "user", content: "早" }], [tools[0]], model), /工具改了却没有追加快照/);
+});
+
+test("a later snapshot replaces changed tools mid-conversation and keeps the prefix", () => {
+  const sayV2 = { type: "function" as const, function: { ...tools[0].function, description: "说一句话" } };
+  const extra = { type: "function" as const, function: { name: "look", description: "看图", parameters: { type: "object" } } };
+  const later = { role: "prompt" as const, system: "SYSTEM", tools: [sayV2, extra] };
+  const before: ChatMessage[] = [base, { role: "user", content: "早" }, { role: "assistant", content: "嗯" }, { role: "user", content: "午" }];
+  const first = buildAnthropicRequest([system, ...before], tools, model);
+  const second = buildAnthropicRequest([system, ...before, later], [extra, sayV2], model);
+
+  assert.deepEqual(second.tools, first.tools, "top-level tools stay as the segment began");
+  assert.ok(!first.betas!.includes("inline-tools-2026-09-15"));
+  assert.ok(second.betas!.includes("inline-tools-2026-09-15"));
+  assert.deepEqual(second.system, first.system);
+  assert.deepEqual(withoutCacheControl(second.messages.slice(0, first.messages.length)), withoutCacheControl(first.messages));
+  assert.deepEqual(second.messages.at(-1), { role: "system", content: [
+    { type: "tool_addition", tool: { type: "tool_definition", definition: { name: "say", description: "说一句话", input_schema: tools[0].function.parameters } } },
+    { type: "tool_addition", tool: { type: "tool_definition", definition: { name: "look", description: "看图", input_schema: { type: "object" } } } },
+    { type: "tool_removal", tool: { type: "tool_reference", name: "note" } },
+  ] });
+  assert.throws(() => buildAnthropicRequest([system, ...before, { ...later, system: "SYSTEM v2" }], [extra, sayV2], model), /人设改了应该先压缩/);
+  assert.throws(() => buildAnthropicRequest([system, ...before, { ...base }], tools, model), /没有区别的提示词快照/);
 });
 
 test("images uploaded through the Files API are referenced by file_id", () => {
-  const request = buildAnthropicRequest([system, { role: "user", content: [{ type: "text", text: "看" }, { type: "file", file_id: "file_011" }] }], tools, model);
+  const request = buildAnthropicRequest([system, base, { role: "user", content: [{ type: "text", text: "看" }, { type: "file", file_id: "file_011" }] }], tools, model);
   assert.deepEqual(withoutCacheControl(request.messages), [
     { role: "user", content: [{ type: "text", text: "看" }, { type: "image", source: { type: "file", file_id: "file_011" } }] },
   ]);
@@ -191,15 +216,15 @@ test("reminders become turn-scoped system messages that stay in place; the break
     { role: "tool", tool_call_id: "toolu_2", content: "发出去了" },
     reminder,
   ];
-  const a = buildAnthropicRequest([system, ...first], tools, model).messages;
-  const b = buildAnthropicRequest([system, ...second], tools, model).messages;
+  const a = buildAnthropicRequest([system, base, ...first], tools, model).messages;
+  const b = buildAnthropicRequest([system, base, ...second], tools, model).messages;
   assert.deepEqual(a, [{ role: "user", content: [{ type: "text", text: "早", cache_control: CACHE }] }, turnScoped]);
   assert.deepEqual(withoutCacheControl(b.slice(0, a.length)), withoutCacheControl(a), "the earlier reminder is sent back where it was");
   assert.deepEqual(b.at(-1), turnScoped);
   assert.deepEqual((b.at(-2) as any).content.at(-1).cache_control, CACHE);
 
-  assert.throws(() => buildAnthropicRequest([system, reminder], tools, model), /前面必须是 user 消息/);
-  assert.throws(() => buildAnthropicRequest([system, { role: "user", content: "早" }, reminder, { role: "user", content: "午" }], tools, model), /后面紧跟着 user 消息/);
+  assert.throws(() => buildAnthropicRequest([system, base, reminder], tools, model), /前面必须是 user 消息/);
+  assert.throws(() => buildAnthropicRequest([system, base, { role: "user", content: "早" }, reminder, { role: "user", content: "午" }], tools, model), /后面紧跟着 user 消息/);
 });
 
 test("model settings Anthropic rejects are caught at startup", () => {
@@ -269,14 +294,14 @@ test("the agent step goes to the provider's own API; raw Anthropic blocks never 
     { role: "user", content: "在吗" },
   ];
 
-  const step = await llm.step([system, ...history], tools, model);
+  const step = await llm.step([system, base, ...history], tools, model);
   assert.equal(sentToAnthropic.length, 1);
   assert.deepEqual(sentToAnthropic[0].messages[1], { role: "assistant", content: rawTurn });
   assert.deepEqual(step.anthropicContent, rawTurn);
   assert.equal(step.promptDigest, digest);
   assert.equal(step.usage.cacheWriteTokens, 90);
 
-  await llm.step([system, ...history], tools, { providerId: "deepseek", modelName: "deepseek-flash", maxTokens: 100 });
+  await llm.step([system, base, ...history], tools, { providerId: "deepseek", modelName: "deepseek-flash", maxTokens: 100 });
   assert.deepEqual(sentToOpenAI[0].messages[2], { role: "assistant", content: null, tool_calls: [] });
   assert.ok(!JSON.stringify(sentToOpenAI[0]).includes("sig-empty"));
 });

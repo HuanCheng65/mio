@@ -13,7 +13,7 @@ import type { ModelConfig, ProviderConfig } from "../llm/provider";
 import type { ChatMessage, ToolCall } from "./log-store";
 import type { SystemMessage } from "./llm";
 import type { AgentModelConfig } from "./models";
-import type { ToolDefinition } from "./tools";
+import { sameTools, type ToolDefinition } from "./tools";
 
 /**
  * 原生 Anthropic Messages API 的请求构造和响应解析（纯函数，不碰网络）。
@@ -21,7 +21,12 @@ import type { ToolDefinition } from "./tools";
  * 缓存是前缀匹配，顺序 tools → system → messages。三个断点：system 上一个（缓存 tools + system），
  * 最后两条 user 消息的最后一块上各一个（见 addMessageBreakpoints）。群里两次调用常隔 5–60 分钟，所以用 1 小时 TTL。
  * 思考块（含签名）由 log 原样保存、原样发回，history 只追加，前面的思考块才一直有效。
- * 签名还绑定了生成它时的 system 和 tools：改了人设或工具定义，之前的思考块就会被拒（见 stripStaleThinking）。
+ *
+ * 顶层的 system 和 tools 用这一段 log 的提示词快照（第一条 prompt 条目），整段不变，缓存才一直有效。
+ * 之后工具定义改了，log 里追加一份新快照，这里把它和上一份的差别发成 system 消息里的
+ * tool_addition（带完整新定义，从那里起替换同名工具）/ tool_removal，前缀不动。
+ * 人设没法这样替换（追加的话旧的还留在开头），runtime 会先压缩、新的一段用新人设开头，所以同一段的快照人设必须一致。
+ * 签名绑定生成它时的前缀：快照写入前生成的思考块可能已经作废（见 stripStaleThinking）。
  * 图片不在其中：每张图按第一次发出时的设置发（image-transport.ts 的 PinnedImageTransport），改配置不影响旧图。
  *
  * 说话提醒是只管一轮的 system 消息（clear_at: next_user_message）：之后有新的 user 消息（包括工具结果）
@@ -31,6 +36,8 @@ import type { ToolDefinition } from "./tools";
 const CACHE = { type: "ephemeral", ttl: "1h" } as const;
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 const CLEAR_AT_BETA = "mid-conversation-system-clear-at-2026-08-21";
+/** 对话中途按完整定义替换同名工具（tool_addition 带 tool_definition） */
+const INLINE_TOOLS_BETA = "inline-tools-2026-09-15";
 
 /** 把 ModelConfig.reasoning 翻译成 thinking / output_config；不支持的组合直接报错 */
 export function anthropicThinking(model: ModelConfig): Pick<MessageCreateParamsNonStreaming, "thinking" | "output_config"> {
@@ -114,6 +121,26 @@ export function anthropicPromptDigest(system: string, tools: ToolDefinition[]): 
   return createHash("sha256").update(JSON.stringify({ system, tools: anthropicTools(tools) })).digest("hex");
 }
 
+type PromptMessage = Extract<ChatMessage, { role: "prompt" }>;
+
+/** 这一段 log 的提示词快照：第一份是顶层 system / tools，最后一份是现在生效的工具 */
+export function promptSnapshots(messages: (SystemMessage | ChatMessage)[]): { base: PromptMessage; latest: PromptMessage } {
+  const prompts = messages.filter((m): m is PromptMessage => m.role === "prompt");
+  if (prompts.length === 0) throw new Error("log 里没有这一段的提示词快照，Anthropic 请求不知道用哪份 system 和 tools");
+  return { base: prompts[0], latest: prompts[prompts.length - 1] };
+}
+
+/** 两份快照之间工具的差别 → tool_addition（新增或改了定义）/ tool_removal 块 */
+function toolChangeBlocks(before: ToolDefinition[], after: ToolDefinition[]): unknown[] {
+  const old = new Map(before.map((t) => [t.function.name, JSON.stringify(t.function)]));
+  const kept = new Set(after.map((t) => t.function.name));
+  const changed = after.filter((t) => old.get(t.function.name) !== JSON.stringify(t.function));
+  return [
+    ...anthropicTools(changed).map((definition) => ({ type: "tool_addition", tool: { type: "tool_definition", definition } })),
+    ...[...old.keys()].filter((name) => !kept.has(name)).map((name) => ({ type: "tool_removal", tool: { type: "tool_reference", name } })),
+  ];
+}
+
 const THINKING = new Set(["thinking", "redacted_thinking"]);
 
 /**
@@ -150,7 +177,10 @@ function addMessageBreakpoints(out: BetaMessageParam[]): void {
   }
 }
 
-/** OpenAI 形状的消息 → Anthropic 请求。第一条必须是 system，最后一条必须是 user（不能预填 assistant）。 */
+/**
+ * OpenAI 形状的消息 → Anthropic 请求。第一条必须是 system（那是 OpenAI 兼容接口用的当前提示词，这里用 log 里的快照），
+ * 最后一条必须是 user（不能预填 assistant）。tools 是这一步实际执行的工具，必须和最后一份快照一致。
+ */
 export function buildAnthropicRequest(
   messages: (SystemMessage | ChatMessage)[],
   tools: ToolDefinition[],
@@ -159,10 +189,24 @@ export function buildAnthropicRequest(
   const [system, ...rest] = messages;
   if (system?.role !== "system") throw new Error("Anthropic 请求的第一条消息必须是 system");
   if (rest.some((m) => m.role === "system")) throw new Error("Anthropic 请求只支持开头一条 system 消息");
+  const { base, latest } = promptSnapshots(rest);
+  if (!sameTools(latest.tools, tools)) throw new Error("这一步的工具和 log 里最后一份提示词快照不一致（工具改了却没有追加快照）");
 
   const out: BetaMessageParam[] = [];
-  for (const message of stripStaleThinking(rest as ChatMessage[], anthropicPromptDigest(system.content, tools))) {
+  let effective = base;
+  for (const message of stripStaleThinking(rest as ChatMessage[], anthropicPromptDigest(base.system, base.tools))) {
     switch (message.role) {
+      case "prompt": {
+        if (message === base) break;
+        if (message.system !== base.system) throw new Error("同一段 log 里的提示词快照人设不一致：人设改了应该先压缩、开新的一段");
+        const blocks = toolChangeBlocks(effective.tools, message.tools);
+        if (blocks.length === 0) throw new Error("log 里有一份和上一份没有区别的提示词快照");
+        // 和提醒一样只能接在 user 消息（含工具结果）后面；后面紧跟 user 消息会被拒绝，在下面检查
+        if (out.at(-1)?.role !== "user") throw new Error("工具变更前面必须是 user 消息或工具结果");
+        out.push({ role: "system", content: blocks } as unknown as BetaMessageParam);
+        effective = message;
+        break;
+      }
       case "reminder": {
         // 只能接在 user 消息（含工具结果）后面；后面紧跟 user 消息会被拒绝，在下面检查
         if (out.at(-1)?.role !== "user") throw new Error("说话提醒前面必须是 user 消息或工具结果");
@@ -182,7 +226,9 @@ export function buildAnthropicRequest(
           out.push({ role: "assistant", content: blocks });
         } else if ((out.at(-1)?.role as string) === "system") {
           // 只有思考块的一步去掉思考块后也是空的。runtime 只给有内容的一步写提醒，所以这里的提醒是那一步的，
-          // 一起省略，否则提醒后面会紧跟 user 消息。这一步在去掉思考块的那一串里，每次都同样省略
+          // 一起省略，否则提醒后面会紧跟 user 消息。这一步在去掉思考块的那一串里，每次都同样省略。
+          // 工具变更只出现在快照之后，那里的思考块不会被去掉；真遇到了说明假设不成立
+          if (!(out.at(-1) as unknown as { clear_at?: string }).clear_at) throw new Error("工具变更后面那一步去掉思考块后是空的，变更没处放");
           out.pop();
         }
         break;
@@ -209,11 +255,12 @@ export function buildAnthropicRequest(
   return {
     model: model.modelName,
     max_tokens: model.maxTokens!,
-    system: [{ type: "text", text: system.content, cache_control: CACHE } satisfies BetaTextBlockParam],
-    tools: anthropicTools(tools),
+    system: [{ type: "text", text: base.system, cache_control: CACHE } satisfies BetaTextBlockParam],
+    tools: anthropicTools(base.tools),
     messages: out,
     ...anthropicThinking(model),
-    betas: [FALLBACK_BETA, CLEAR_AT_BETA],
+    // 只有带了工具变更才要这个 beta：没改过工具的段，请求和以前完全一样
+    betas: effective === base ? [FALLBACK_BETA, CLEAR_AT_BETA] : [FALLBACK_BETA, CLEAR_AT_BETA, INLINE_TOOLS_BETA],
     fallbacks: "default",
   };
 }

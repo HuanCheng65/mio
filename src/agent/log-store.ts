@@ -6,6 +6,7 @@ import type { BanBody, MioEventRow, ReactionBody, RecallBody } from "./event-sto
 import type { ImagePart, ImageTransport } from "./image-transport";
 import { renderBatch, type LogPart } from "./log-format";
 import { estimateTokens, IMAGE_TOKENS } from "./tokens";
+import type { ToolDefinition } from "./tools";
 
 /**
  * 每个群一条只追加的 log，就是发给模型的上下文。条目一旦写入就不再改动：
@@ -15,8 +16,16 @@ import { estimateTokens, IMAGE_TOKENS } from "./tokens";
 /**
  * reminder：唤醒时发出的说话提醒，只管它后面那一轮。记下发出时的原文，以后原样发回、留在原位，
  * 前缀才不会因为提醒挪走而变化（Anthropic 上还会让后面的思考块失效）。
+ *
+ * prompt：提示词快照（人设 + 环境说明拼成的 system 和工具定义）。一段里第一份是这一段的开头，
+ * Anthropic 请求的顶层 system / tools 整段都用它；之后工具定义改了再追加一份，发成对话中途的工具变更。
  */
-export type LogRole = "user" | "assistant" | "tool" | "reminder";
+export type LogRole = "user" | "assistant" | "tool" | "reminder" | "prompt";
+
+export interface PromptSnapshot {
+  system: string;
+  tools: ToolDefinition[];
+}
 
 export interface ToolCall {
   id: string;
@@ -41,6 +50,8 @@ export interface MioLogEntryRow {
   anthropicContent: BetaContentBlock[] | null;
   /** 有 anthropicContent 的条目：生成时 system 和 tools 的指纹，判断其中的思考块还能不能原样发回 */
   promptDigest: string | null;
+  /** prompt 条目的快照 */
+  prompt: PromptSnapshot | null;
   /** user 批次覆盖到的最后一个事件 seq */
   lastSeq: number | null;
   tokens: number;
@@ -65,6 +76,7 @@ export function extendLogTable(ctx: Context): void {
     reasoning: { type: "text", nullable: true },
     anthropicContent: { type: "json", nullable: true },
     promptDigest: { type: "string", length: 64, nullable: true },
+    prompt: { type: "json", nullable: true },
     lastSeq: { type: "unsigned", nullable: true },
     tokens: "unsigned",
     createdAt: "unsigned(8)",
@@ -88,7 +100,9 @@ export type ChatMessage =
   }
   | { role: "tool"; tool_call_id: string; content: string }
   /** 不是 OpenAI 的角色：各供应商的请求构造各自处理（Anthropic 是只管一轮的 system 消息） */
-  | { role: "reminder"; content: string };
+  | { role: "reminder"; content: string }
+  /** 不是 OpenAI 的角色：提示词快照，只有 Anthropic 的请求构造用 */
+  | ({ role: "prompt" } & PromptSnapshot);
 
 export interface NewLogEntry {
   role: LogRole;
@@ -98,6 +112,7 @@ export interface NewLogEntry {
   reasoning?: string | null;
   anthropicContent?: BetaContentBlock[] | null;
   promptDigest?: string | null;
+  prompt?: PromptSnapshot;
 }
 
 /** 每个群按它当前的模型用对应供应商的发图方式 */
@@ -287,9 +302,11 @@ export class AgentLog {
       // 思考块的签名不算 token，不计入 tokens，免得虚高提前触发睡前整理
       anthropicContent: entry.anthropicContent ?? null,
       promptDigest: entry.promptDigest ?? null,
+      prompt: entry.prompt ?? null,
       lastSeq,
-      // 发过的提醒之后不再显示（Anthropic 不计费，OpenAI 兼容的请求里不发），不计入 tokens
-      tokens: entry.role === "reminder" ? 0 : partsTokens(entry.content) + toolCallTokens + (entry.reasoning ? estimateTokens(entry.reasoning) : 0),
+      // 发过的提醒之后不再显示（Anthropic 不计费，OpenAI 兼容的请求里不发），不计入 tokens；
+      // 快照是顶层 system / tools 或一次工具变更，不算 log 本身的长度
+      tokens: entry.role === "reminder" || entry.role === "prompt" ? 0 : partsTokens(entry.content) + toolCallTokens + (entry.reasoning ? estimateTokens(entry.reasoning) : 0),
       createdAt: Date.now(),
     });
   }
@@ -337,6 +354,9 @@ export class AgentLog {
         messages.push({ role: "tool", tool_call_id: e.toolCallId, content: text });
       } else if (e.role === "reminder") {
         messages.push({ role: "reminder", content: text });
+      } else if (e.role === "prompt") {
+        if (!e.prompt) throw new Error(`log entry ${e.id}: prompt entry without a snapshot`);
+        messages.push({ role: "prompt", ...e.prompt });
       } else if (e.role === "assistant") {
         messages.push({
           role: "assistant",
