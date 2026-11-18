@@ -164,4 +164,24 @@ export class NoteStore {
   async about(groupId: string, about: string): Promise<MioNoteRow[]> {
     return this.ctx.database.get("mio.note", { groupId, about }, { sort: { updatedAt: "desc" } });
   }
+
+  /** 和给定向量相近的笔记（同一个 about，不分类型，不含表情包） */
+  async similar(
+    groupId: string,
+    vector: number[],
+    options: { about: string; excludeId: number; limit: number; minScore: number },
+  ): Promise<ScoredNote[]> {
+    const rows = await this.ctx.database.get("mio.note", { groupId, about: options.about, id: { $ne: options.excludeId } });
+    return rows
+      .filter((note) => note.kind !== "sticker")
+      .map((note) => ({ note, score: cosineSimilarity(vector, note.embedding) }))
+      .filter((s) => s.score >= options.minScore)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, options.limit);
+  }
+
+  /** 合并后删掉并进去的笔记 */
+  async remove(groupId: string, ids: number[]): Promise<void> {
+    await this.ctx.database.remove("mio.note", { groupId, id: { $in: ids } });
+  }
 }

@@ -19,6 +19,9 @@ const KIND_BY_NAME = Object.fromEntries(Object.entries(KIND_NAMES).map(([k, v]) 
 const RECALL_LIMIT = 5;
 const RECALL_MIN_SCORE = 0.35;
 const STICKER_MIN_SCORE = 0.45;
+/** 记下新笔记后列出的相近笔记。实测同一件事换个说法只有 0.7–0.8，相关的另一件事也常在 0.8 以上，所以只当线索 */
+const SIMILAR_LIMIT = 3;
+const SIMILAR_MIN_SCORE = 0.7;
 
 export interface MemoryDeps {
   ctx: Context;
@@ -63,6 +66,11 @@ async function headline(deps: MemoryDeps, groupId: string, note: MioNoteRow): Pr
   return `#n${note.id} [${KIND_NAMES[note.kind]}·${await aboutLabel(deps, groupId, note.about)}] ${note.title} (${day(note.updatedAt)})${hidden}`;
 }
 
+function parseNoteIds(raw: unknown): number[] {
+  const text = Array.isArray(raw) ? raw.join(" ") : String(raw ?? "");
+  return [...text.matchAll(/n?(\d+)/g)].map((m) => Number(m[1]));
+}
+
 function parseSeqs(raw: unknown): number[] {
   const text = Array.isArray(raw) ? raw.join(" ") : String(raw ?? "");
   return [...text.matchAll(/m?(\d+)/g)].map((m) => Number(m[1]));
@@ -76,7 +84,7 @@ export function createRecallTool(deps: MemoryDeps): AgentTool {
   return {
     name: "recall",
     description:
-      "翻你的小本本。给 query 时列出相关笔记的标题；给 id 时展开一条，连同出处原话一起看。" +
+      "翻你的笔记。给 query 时列出相关笔记的标题；给 id 时展开一条，连同出处原话一起看。" +
       "〔你隐约记得〕里出现的、或者对话里提到你可能记过的事，想细想时用。没有线索的事通常不用翻。",
     parameters: {
       type: "object",
@@ -90,7 +98,7 @@ export function createRecallTool(deps: MemoryDeps): AgentTool {
       if (args.id !== undefined && args.id !== "") {
         const id = Number(/(\d+)/.exec(String(args.id))?.[1]);
         const note = await deps.notes.open(ctx.groupId, id);
-        if (!note) return `本子里没有 n${args.id}`;
+        if (!note) return `没有 n${args.id} 这条笔记`;
         const lines = [await headline(deps, ctx.groupId, note), note.content];
         if (note.createdAt !== note.updatedAt) lines.push(`记于 ${day(note.createdAt)}，改过 ${day(note.updatedAt)}`);
         if (note.private) lines.push("这条放在心里：对方不提，你就别主动提。");
@@ -115,7 +123,7 @@ export function createRecallTool(deps: MemoryDeps): AgentTool {
         limit: RECALL_LIMIT,
         minScore: RECALL_MIN_SCORE,
       });
-      if (found.length === 0) return "本子里没找到相关的";
+      if (found.length === 0) return "笔记里没找到相关的";
       return (await Promise.all(found.map((f) => headline(deps, ctx.groupId, f.note)))).join("\n");
     },
   };
@@ -150,7 +158,7 @@ export function createPersonTool(deps: MemoryDeps): AgentTool {
         lines.push("记过的事：");
         for (const n of others.slice(0, 10)) lines.push(`  ${await headline(deps, ctx.groupId, n)}`);
       }
-      if (notes.length === 0) lines.push("本子里还没记过 ta 什么");
+      if (notes.length === 0) lines.push("还没记过 ta 什么");
       return lines.join("\n");
     },
   };
@@ -160,10 +168,12 @@ export function createRememberTool(deps: MemoryDeps): AgentTool {
   return {
     name: "remember",
     description:
-      "在小本本上记一笔。值得记的：和某个人有关的事（在忙什么、喜欢什么、怎么称呼 ta）、让人印象深的事、" +
-      "群里的梗、你自己说过的观点或答应过的事。寒暄、刷屏不用记。" +
+      "记一笔。值得记的是过一阵还用得上的：某个人的近况、打算、喜好、怎么称呼 ta，还没聊完的事，" +
+      "你答应过谁的事，群里会反复拿出来用的梗，你自己表过的态。" +
+      "谁问了什么、谁怎么答的这种经过不用记，别的 bot 答题、认图的经过也不用，除非群里把它玩成了梗。寒暄、刷屏不用记。" +
       "用你自己的口吻写，可以带不确定（\"好像\"\"应该\"）。写上出处的消息编号。" +
-      "要是本子里已经有这件事、现在有了变化，用 update 改写那一条，把前后变化写在一起。" +
+      "已经记过的事有了变化，用 update 改写那一条，把前后变化写在一起。" +
+      "同一件事记成了好几条，用 update 改写其中一条、把其余几条填进 merge，合成一条，其余的会删掉。" +
       "别人在难受时说的话，记下来但标 private：对方不提你就不提。" +
       "收藏表情包：kind 填表情包，message 填图所在的消息，title 写它适合表达的感觉。",
     parameters: {
@@ -176,6 +186,7 @@ export function createRememberTool(deps: MemoryDeps): AgentTool {
         sources: { type: "string", description: "出处的消息编号，如 \"m120 m123\"" },
         private: { type: "boolean", description: "放在心里，对方不提就不主动提" },
         update: { type: "string", description: "改写已有笔记时填它的编号，如 n12" },
+        merge: { type: "string", description: "和 update 一起用：并进这一条的其他笔记编号，如 \"n15 n16\"；它们的内容要写进新的 content，并完会删掉" },
         message: { type: "string", description: "收藏表情包时：图所在的消息编号" },
         image: { type: "number", description: "收藏表情包时：这条消息里的第几张图，从 1 开始，默认第 1 张" },
       },
@@ -187,16 +198,33 @@ export function createRememberTool(deps: MemoryDeps): AgentTool {
       if (!title) return "要有一句话标题";
       const sources = parseSeqs(args.sources);
 
+      const merged = [...new Set(parseNoteIds(args.merge))];
       if (args.update !== undefined && args.update !== "") {
         const id = Number(/(\d+)/.exec(String(args.update))?.[1]);
-        const updated = await deps.notes.rewrite(ctx.groupId, id, {
+        const target = await deps.notes.get(ctx.groupId, id);
+        if (!target) return `没有 n${args.update} 这条笔记`;
+        if (merged.includes(id)) return `merge 里不能有要改写的 n${id} 自己`;
+        const others = [];
+        for (const mergedId of merged) {
+          const note = await deps.notes.get(ctx.groupId, mergedId);
+          if (!note) return `没有 n${mergedId} 这条笔记，这次什么都没改`;
+          if ((note.kind === "sticker") !== (target.kind === "sticker")) return `n${mergedId} 和 n${id} 一个是表情包一个不是，不能合并，这次什么都没改`;
+          others.push(note);
+        }
+        await deps.notes.rewrite(ctx.groupId, id, {
           title,
           content: content || title,
-          sources,
-          ...(args.private === undefined ? {} : { private: Boolean(args.private) }),
+          sources: [...sources, ...others.flatMap((n) => n.sources)],
+          // 并进来的有一条是放心里的，合成的这条也放心里，除非她明确说不用
+          ...(args.private === undefined
+            ? (others.some((n) => n.private) ? { private: true } : {})
+            : { private: Boolean(args.private) }),
         });
-        return updated ? `改好了 #n${id}` : `本子里没有 n${args.update}`;
+        if (others.length === 0) return `改好了 #n${id}`;
+        await deps.notes.remove(ctx.groupId, merged);
+        return `改好了 #n${id}，${merged.map((m) => `n${m}`).join("、")} 已并进来删掉了`;
       }
+      if (merged.length > 0) return "merge 要和 update 一起用：把它们并进 update 那一条";
 
       const kind = KIND_BY_NAME[String(args.kind)];
       if (!kind) return `kind 只能是：${Object.values(KIND_NAMES).join("、")}`;
@@ -224,11 +252,17 @@ export function createRememberTool(deps: MemoryDeps): AgentTool {
       const vector = await deps.notes.embed(note);
       const duplicate = await deps.notes.findDuplicate(ctx.groupId, note, vector);
       if (duplicate) {
-        return `本子里已经有一条很像的：${await headline(deps, ctx.groupId, duplicate)}：${duplicate.content}\n` +
+        return `已经记过一条很像的：${await headline(deps, ctx.groupId, duplicate)}：${duplicate.content}\n` +
           `是同一件事有了变化，就用 update=n${duplicate.id} 改写；确实是另一件事，就写得更具体些。这次没记`;
       }
       const created = await deps.notes.create(ctx.groupId, note, vector);
-      return `记下了 #n${created.id}`;
+      if (kind === "sticker") return `记下了 #n${created.id}`;
+      // 相似度分不清"同一件事换了说法"和"相关的另一件事"，所以照样记下，把相近的给她看，是不是同一件事由她判断
+      const similar = await deps.notes.similar(ctx.groupId, vector, { about, excludeId: created.id, limit: SIMILAR_LIMIT, minScore: SIMILAR_MIN_SCORE });
+      if (similar.length === 0) return `记下了 #n${created.id}`;
+      const lines = await Promise.all(similar.map((s) => headline(deps, ctx.groupId, s.note)));
+      return `记下了 #n${created.id}。关于${await aboutLabel(deps, ctx.groupId, about)}，相近的还有：\n${lines.join("\n")}\n` +
+        `其中有和这条是同一件事的，就用 update 改写一条、其余的填进 merge，合成一条。不是就不用管`;
     },
   };
 }

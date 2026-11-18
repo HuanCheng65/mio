@@ -53,7 +53,7 @@ test("remember resolves who it is about, refuses near-duplicates and rewrites on
 
   assert.equal(await remember.run({ kind: "事件", about: "#a1", title: "小林下周期末", content: "小林好像下周要期末考试", sources: "m1" }, ctx), "记下了 #n1");
   const again = await remember.run({ kind: "事件", about: "小林", title: "小林下周期末", content: "小林好像下周要期末考试" }, ctx);
-  assert.match(again, /已经有一条很像的：#n1 \[事件·小林#a1\] 小林下周期末/);
+  assert.match(again, /已经记过一条很像的：#n1 \[事件·小林#a1\] 小林下周期末/);
   assert.match(again, /update=n1/);
 
   assert.equal(await remember.run({ kind: "事件", title: "小林考完了", content: "小林上周说要期末，今天说考完了，感觉考得还行", sources: "m3", update: "n1" }, ctx), "改好了 #n1");
@@ -62,6 +62,31 @@ test("remember resolves who it is about, refuses near-duplicates and rewrites on
   assert.equal(note!.title, "小林考完了");
 
   assert.match(await remember.run({ kind: "事件", about: "#a9", title: "x" }, ctx), /不知道 #a9 是谁/);
+  await app.stop();
+});
+
+test("a new note lists close notes about the same person, which update + merge folds into one", async () => {
+  const { app, remember, notes } = await setup();
+  await remember.run({ kind: "印象", about: "#a1", title: "小林眼尖", content: "小林说我那句夸人的话AI味太重", sources: "m1" }, ctx);
+  await remember.run({ kind: "事件", about: "#a2", title: "阿九说AI味太重", content: "阿九说我那句夸人的话AI味太重" }, ctx);
+  const added = await remember.run({ kind: "事件", about: "#a1", title: "小林说我AI味重", content: "小林说我夸人那句AI味太重了", sources: "m2" }, ctx);
+  assert.match(added, /^记下了 #n3。关于小林#a1，相近的还有：\n#n1 \[印象·小林#a1\] 小林眼尖/);
+  assert.doesNotMatch(added, /阿九/, "only notes about the same person");
+
+  assert.match(await remember.run({ kind: "印象", title: "x", merge: "n3" }, ctx), /要和 update 一起用/);
+  assert.match(await remember.run({ kind: "印象", title: "x", update: "n1", merge: "n1" }, ctx), /不能有要改写的 n1 自己/);
+  assert.match(await remember.run({ kind: "印象", title: "x", update: "n1", merge: "n3 n9" }, ctx), /没有 n9 这条笔记，这次什么都没改/);
+  assert.equal((await notes.get(G, 1))!.title, "小林眼尖");
+
+  const merged = await remember.run({ kind: "印象", title: "小林眼尖，挑过我的AI味", content: "小林两次说我夸人AI味太重，眼挺尖", update: "n1", merge: "n3" }, ctx);
+  assert.equal(merged, "改好了 #n1，n3 已并进来删掉了");
+  assert.equal(await notes.get(G, 3), null);
+  assert.deepEqual((await notes.get(G, 1))!.sources, [1, 2]);
+  assert.equal((await notes.get(G, 1))!.private, false);
+
+  await remember.run({ kind: "事件", about: "#a1", title: "小林深夜难受", content: "小林半夜说心情很差", private: true }, ctx);
+  await remember.run({ kind: "印象", title: "小林眼尖，最近也不太好", content: "小林眼挺尖，最近好像心情不好", update: "n1", merge: "n4" }, ctx);
+  assert.equal((await notes.get(G, 1))!.private, true, "a private note folded in keeps the result private");
   await app.stop();
 });
 
@@ -78,7 +103,7 @@ test("recall lists titles, then opens one with its source and counts the recall"
   assert.match(opened, /对方不提，你就别主动提/);
   assert.match(opened, /出处 \[m1\] 阿九: 最近心情很差 不想说/);
   assert.equal((await notes.get(G, 1))!.recallCount, 1);
-  assert.equal(await recall.run({ query: "完全无关的天气预报" }, ctx), "本子里没找到相关的");
+  assert.equal(await recall.run({ query: "完全无关的天气预报" }, ctx), "笔记里没找到相关的");
   await app.stop();
 });
 
