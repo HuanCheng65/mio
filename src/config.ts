@@ -164,7 +164,7 @@ export const Config: Schema<Config> = Schema.object({
     }).description("防刷屏护栏（只防失控，放得宽）"),
     sleep: Schema.object({
       maxSteps: Schema.number().default(12).description("睡前整理最多几步"),
-      compactTokens: Schema.number().default(100_000).description("log 达到这个大小就睡"),
+      compactTokens: Schema.number().default(128_000).description("唤醒的最后一次请求的真实上下文（API 返回的输入 + 输出 token）达到这个大小就睡"),
       minTokens: Schema.number().default(8000).description("log 小于这个不整理"),
       tailEvents: Schema.number().default(30).description("新一段开头带上的最近消息条数"),
     }).description("睡眠与压缩"),

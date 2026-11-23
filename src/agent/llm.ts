@@ -82,10 +82,12 @@ export class AgentLLM {
     }
 
     const message = choice.message as typeof choice.message & { reasoning_content?: string };
+    // 压缩按这里的真实用量判断，没有 usage 就没法判断
+    if (!response.usage) throw new Error(`${model.modelName} 的响应没有 usage，没法判断上下文大小`);
     const usage = {
-      promptTokens: response.usage?.prompt_tokens ?? 0,
-      completionTokens: response.usage?.completion_tokens ?? 0,
-      cachedTokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      promptTokens: response.usage.prompt_tokens,
+      completionTokens: response.usage.completion_tokens,
+      cachedTokens: response.usage.prompt_tokens_details?.cached_tokens ?? 0,
       cacheWriteTokens: 0,
     };
     tokenTracker.record(model.modelName, usage, "agent");

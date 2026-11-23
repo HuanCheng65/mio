@@ -10,7 +10,7 @@ type Logger = ReturnType<Context["logger"]>;
 
 export interface SleepOptions {
   maxSteps: number;
-  /** log 达到这个大小，在这次唤醒结束后睡 */
+  /** 唤醒的最后一次请求的真实上下文（API 返回的输入 + 输出 token）达到这个大小，这次唤醒结束后就睡 */
   compactTokens: number;
   /** log 小于这个就不值得整理 */
   minTokens: number;
@@ -117,8 +117,8 @@ export class AgentRuntime {
             this.logger.info(`[${groupId}] 人设或环境说明改了，先睡前整理，新的一段用新的`);
             await this.sleepOnce(groupId, true, false);
           }
-          await this.wakeOnce(groupId);
-          if ((await this.log.tokenCount(groupId)) >= this.options.sleep.compactTokens || (await this.log.overImageBudget(groupId))) {
+          const contextTokens = await this.wakeOnce(groupId);
+          if ((contextTokens !== null && contextTokens >= this.options.sleep.compactTokens) || (await this.log.overImageBudget(groupId))) {
             this.sleepRequested.add(groupId);
           }
         }
@@ -133,11 +133,12 @@ export class AgentRuntime {
     return base !== undefined && base.prompt!.system !== this.options.prompts().systemPrompt;
   }
 
-  private async wakeOnce(groupId: string): Promise<void> {
+  /** 返回最后一次请求的真实上下文大小；没有新消息、没发请求时返回 null */
+  private async wakeOnce(groupId: string): Promise<number | null> {
     await this.closeInterrupted(groupId);
     const first = await this.log.appendPendingBatch(groupId);
-    if (!first) return;
-    await this.steps(groupId, { maxSteps: this.options.maxSteps, allowOutward: true, appendArrivals: true });
+    if (!first) return null;
+    return (await this.steps(groupId, { maxSteps: this.options.maxSteps, allowOutward: true, appendArrivals: true })).contextTokens;
   }
 
   private async closeInterrupted(groupId: string): Promise<void> {
@@ -176,7 +177,7 @@ export class AgentRuntime {
   private async steps(
     groupId: string,
     options: { maxSteps: number; allowOutward: boolean; appendArrivals: boolean },
-  ): Promise<{ text: string; endedWithTools: boolean }> {
+  ): Promise<{ text: string; endedWithTools: boolean; contextTokens: number }> {
     const { platform } = parseGroupId(groupId);
     const tools = this.tools.definitions(platform);
     const ctx = { groupId, platform, shadow: this.options.isShadow(groupId), allowOutward: options.allowOutward };
@@ -184,6 +185,8 @@ export class AgentRuntime {
     let cachedTokens = 0;
     let cacheWriteTokens = 0;
     let toolCalls = 0;
+    // 最后一次请求的输入 + 输出：请求刚结束时，这就是当前上下文的真实大小
+    let contextTokens = 0;
 
     for (let step = 1; step <= options.maxSteps; step++) {
       if (step > 1 && options.appendArrivals) await this.log.appendPendingBatch(groupId);
@@ -214,6 +217,7 @@ export class AgentRuntime {
       promptTokens += result.usage.promptTokens;
       cachedTokens += result.usage.cachedTokens;
       cacheWriteTokens += result.usage.cacheWriteTokens;
+      contextTokens = result.usage.promptTokens + result.usage.completionTokens;
       // 实测缓存能留多久：长间隔后的命中情况（缓存写入只有 Anthropic 单独报告，写入多说明没命中）
       if (gap >= 30 * 60_000) {
         this.logger.info(`[${groupId}] 距上次请求 ${duration(gap)}，缓存命中 ${result.usage.cachedTokens}/${result.usage.promptTokens}，缓存写入 ${result.usage.cacheWriteTokens}`);
@@ -238,7 +242,7 @@ export class AgentRuntime {
       });
       if (result.toolCalls.length === 0) {
         this.logger.debug(`[${groupId}] agent 完成: 工具调用 ${toolCalls} 次, prompt ${promptTokens} tokens (缓存命中 ${cachedTokens}，缓存写入 ${cacheWriteTokens})`);
-        return { text: result.content, endedWithTools: false };
+        return { text: result.content, endedWithTools: false, contextTokens };
       }
 
       for (const call of result.toolCalls) {
@@ -248,6 +252,6 @@ export class AgentRuntime {
       }
     }
     this.logger.info(`[${groupId}] agent 用完了 ${options.maxSteps} 步`);
-    return { text: "", endedWithTools: true };
+    return { text: "", endedWithTools: true, contextTokens };
   }
 }

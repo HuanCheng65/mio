@@ -284,11 +284,21 @@ test("a manual sleep consolidates even a small log", async () => {
   await app.stop();
 });
 
-test("a log over the size limit sleeps right after the wake", async () => {
-  const { app, log, runtime, say } = await setup([reply(), finish()], { sleep: { compactTokens: 1 } });
+const used = (promptTokens: number, completionTokens: number) => ({ usage: { promptTokens, completionTokens, cachedTokens: 0, cacheWriteTokens: 0 } });
+
+test("a wake whose last request reaches the size limit sleeps right after it", async () => {
+  const { app, log, runtime, say } = await setup([reply([], used(50, 10)), finish()], { sleep: { compactTokens: 60 } });
   await say("早");
   await runtime.wake(G);
   assert.equal(await log.currentSegment(G), 2);
+  await app.stop();
+});
+
+test("the size limit is judged by the request's real usage, not the log's estimate", async () => {
+  const { app, log, runtime, say } = await setup([reply([], used(50, 9))], { sleep: { compactTokens: 60 } });
+  await say("早".repeat(100));
+  await runtime.wake(G);
+  assert.equal(await log.currentSegment(G), 1);
   await app.stop();
 });
 
