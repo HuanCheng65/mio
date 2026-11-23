@@ -161,8 +161,9 @@ export class AgentRuntime {
     const result = await this.steps(groupId, { maxSteps: this.options.sleep.maxSteps, allowOutward: false, appendArrivals: false });
     if (result.endedWithTools) throw new Error(`[${groupId}] 睡前整理用完 ${this.options.sleep.maxSteps} 步，还没写出群速写和交接`);
 
-    const sections = /【群速写】([\s\S]*?)【交接】([\s\S]*)/.exec(result.text);
-    if (!sections) throw new Error(`[${groupId}] 睡前整理没有按【群速写】【交接】格式收尾:\n${result.text}`);
+    // 用 XML 标签而不是【群速写】【交接】：Claude 会把【群速写】写成【群群速写】【群变速写】，整理就失败了
+    const sections = /<sketch>([\s\S]*?)<\/sketch>[\s\S]*?<handoff>([\s\S]*?)<\/handoff>/.exec(result.text);
+    if (!sections) throw new Error(`[${groupId}] 睡前整理没有按 <sketch> <handoff> 格式收尾:\n${result.text}`);
     const preamble = `〔群速写〕\n${sections[1].trim()}\n\n〔上一段的交接〕\n${sections[2].trim()}`;
 
     await this.log.startSegment(groupId, preamble, this.options.sleep.tailEvents);

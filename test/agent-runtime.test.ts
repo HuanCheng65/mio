@@ -232,7 +232,7 @@ test("bad tool calls come back as results the model can act on", async () => {
 });
 
 const loud: AgentTool = { name: "say", description: "", parameters: {}, outward: true, async run() { return "发出去了"; } };
-const finish = (sketch = "群里很安静", handoff = "小林说要去考试") => reply([], { content: `【群速写】\n${sketch}\n【交接】\n${handoff}` });
+const finish = (sketch = "群里很安静", handoff = "小林说要去考试") => reply([], { content: `<sketch>\n${sketch}\n</sketch>\n\n<handoff>\n${handoff}\n</handoff>` });
 
 test("sleep consolidates without speaking and opens a new segment", async () => {
   const note: AgentTool = { name: "note", description: "", parameters: {}, async run() { return "记下了"; } };
@@ -260,9 +260,9 @@ test("sleep consolidates without speaking and opens a new segment", async () => 
 });
 
 test("a sleep that does not end with the two sections leaves the log alone", async () => {
-  const { app, log, runtime, say, segmentStarts } = await setup([reply([], { content: "睡了" })]);
+  const { app, log, runtime, say, segmentStarts } = await setup([reply([], { content: "【群群速写】\n群里很安静\n【交接】\n小林说要去考试" })]);
   await say("早");
-  await assert.rejects(runtime.requestSleep(G), /没有按【群速写】【交接】格式收尾/);
+  await assert.rejects(runtime.requestSleep(G), /没有按 <sketch> <handoff> 格式收尾/);
   assert.equal(await log.currentSegment(G), 1);
   assert.deepEqual(segmentStarts, []);
   await app.stop();
