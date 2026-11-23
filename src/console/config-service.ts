@@ -4,6 +4,7 @@ import { GoogleGenAI } from "@google/genai";
 import { Config as ConfigSchema, type Config as MioConfig } from "../config";
 import { createAnthropicClient, type ProviderConfig, type ModelConfig } from "../llm/provider";
 import { checkAgentModels } from "../agent/models";
+import { restoreRefs, type ChangedRef } from "./config-refs";
 
 export interface ProviderTestResult {
   ok: boolean;
@@ -34,8 +35,28 @@ export class ConfigService {
 
     this.validateCrossRefs(parsed);
 
+    // scope.update 会同步触发 loader 的 internal/before-update：它把解析后的值写进父级配置，
+    // 并排一次异步的 writeConfig。在写盘之前把这一段换成还原了 ${{ }} 引用的版本，
+    // 插件拿到的仍是解析后的值，koishi.yml 里留下的是引用。
+    // mio 不是可多开的插件，apply 拿到的 ctx.scope 是插件主体，koishi.yml 里的条目对应它名下的 fork
+    const loader = this.ctx.loader;
+    const forks = this.ctx.scope.runtime.children.filter((child) => loader.getRefName(child));
+    if (forks.length !== 1) {
+      throw new Error(`koishi.yml 里应恰好有一个 mio 条目，实际找到 ${forks.length} 个，无法保存配置`);
+    }
+    const fork = forks[0];
+    const key = loader.getRefName(fork);
+    const siblings = fork.parent.scope.config as Record<string, unknown>;
+    const raw = siblings[key];
+
     this.logger.info("[config] 通过 Console 写入配置，触发插件热重载");
     this.ctx.scope.update(parsed);
+
+    const changed: ChangedRef[] = [];
+    siblings[key] = restoreRefs(raw, this.current, siblings[key], changed);
+    for (const { path, ref } of changed) {
+      this.logger.warn("[config] %s 原来是 %s，面板改了它的值，koishi.yml 里现在是明文", path, ref);
+    }
   }
 
   async testProvider(provider: ProviderConfig): Promise<ProviderTestResult> {
